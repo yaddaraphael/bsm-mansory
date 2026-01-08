@@ -1,0 +1,21 @@
+Project Assignment Notification
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been {% if is_new %}assigned to{% else %}updated on{% endif %} a new project:
+
+Project: {{ project.name }}
+Job Number: {{ project.job_number }}
+{% if project.client_name %}Client: {{ project.client_name }}{% endif %}
+{% if project.work_location %}Location: {{ project.work_location }}{% endif %}
+Status: {{ project.get_status_display }}
+Start Date: {{ project.start_date|date:"F d, Y" }}
+
+To view project details, please visit: {{ project_url }}
+
+You can also log in to your account at: {{ login_url }}
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+If you have any questions, please contact your Project Manager or Admin.
+

@@ -1,0 +1,21 @@
+Welcome to BSM System
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM (Building Systems Management) system by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Role: {{ user.get_role_display }}
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your system administrator.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

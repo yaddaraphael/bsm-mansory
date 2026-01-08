@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #772025; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background-color: #f9f9f9; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #772025; color: white; text-decoration: none; border-radius: 4px; margin: 20px 0; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo" style="font-size: 28px; font-weight: bold; margin-bottom: 10px;">BSM</div>
+            <p style="margin: 0; font-size: 14px; opacity: 0.9;">Building Systems Management</p>
+            <h1 style="margin-top: 10px;">Welcome to BSM System - Superintendent Account</h1>
+        </div>
+        <div class="content">
+            <p>Hello {{ user.first_name|default:user.username }},</p>
+            
+            <p>You have been invited to join the BSM system as a <strong>Superintendent / Site Supervisor</strong> by {{ invited_by.get_full_name|default:invited_by.username }}.</p>
+            
+            <p><strong>Your Account Details:</strong></p>
+            <ul>
+                <li><strong>Email:</strong> {{ user.email }}</li>
+                <li><strong>Username:</strong> {{ user.username }}</li>
+            </ul>
+            
+            <p><strong>As a Superintendent, you can:</strong></p>
+            <ul>
+                <li>View all site activity for assigned projects</li>
+                <li>Approve/reject daily reports and time entries</li>
+                <li>Correct time exceptions with audit logging</li>
+                <li>Validate workers and equipment on ground</li>
+                <li>Create site-level issues and flags</li>
+            </ul>
+            
+            <p><strong>To activate your account and set your password, please click the button below:</strong></p>
+            
+            <p style="text-align: center;">
+                <a href="{{ activation_url }}" class="button">Activate Account & Set Password</a>
+            </p>
+            
+            <p>After activation, you can login at: <a href="{{ login_url }}">{{ login_url }}</a></p>
+            
+            <p>If you have any questions, please contact your Project Manager or Admin.</p>
+        </div>
+        <div class="footer">
+            <p>This is an automated message from BSM System. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>
+

@@ -1,0 +1,27 @@
+Welcome to BSM System - Superintendent Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a Superintendent / Site Supervisor by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a Superintendent, you can:
+- View all site activity for assigned projects
+- Approve/reject daily reports and time entries
+- Correct time exceptions with audit logging
+- Validate workers and equipment on ground
+- Create site-level issues and flags
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your Project Manager or Admin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

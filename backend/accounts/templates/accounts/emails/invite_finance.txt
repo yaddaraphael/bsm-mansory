@@ -1,0 +1,27 @@
+Welcome to BSM System - Finance Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as Finance by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As Finance, you can:
+- View job cost dashboards (cost-to-date vs earned progress)
+- Review forecast costs and margins
+- Validate coding issues (wrong cost code/phase)
+- Approve cost corrections
+- Export finance reports (CSV/PDF)
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your Admin or System Admin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

@@ -1,0 +1,27 @@
+Welcome to BSM System - HR Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as HR by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As HR, you can:
+- Invite users (workers, foremen, supers) within allowed scope
+- Manage employee status (active/inactive)
+- Review timecards and resolve exceptions
+- Lock pay periods
+- View invitation and permission history
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your Admin or System Admin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

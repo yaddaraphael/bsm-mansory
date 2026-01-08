@@ -1,0 +1,27 @@
+Welcome to BSM System - Foreman Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a Foreman by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a Foreman, you can:
+- Clock in/out and manage crew time entries
+- Submit daily reports with installed quantities
+- Add notes, photos, and blockers
+- Manage equipment on site
+- Transfer equipment between sites
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your Superintendent or Project Manager.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

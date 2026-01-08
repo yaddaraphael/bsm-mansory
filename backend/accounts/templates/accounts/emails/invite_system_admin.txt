@@ -1,0 +1,28 @@
+Welcome to BSM System - System Admin Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a System Admin by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a System Admin, you can:
+- Everything Admin can do, plus:
+- Configure integrations (Spectrum/Traqspera/SharePoint)
+- Manage sync schedules and mapping rules
+- Manage authentication settings (SSO, MFA policies)
+- System monitoring (errors, retries, performance)
+- Tenant-wide configuration templates
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your Superadmin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

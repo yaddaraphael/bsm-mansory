@@ -1,0 +1,26 @@
+Welcome to BSM System - Worker Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a Worker by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a Worker, you can:
+- Clock in and clock out for assigned projects
+- View your timesheet entries
+- Request time corrections
+- View assigned job notices
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact your supervisor or HR.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

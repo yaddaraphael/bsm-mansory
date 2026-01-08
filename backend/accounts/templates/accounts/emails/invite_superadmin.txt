@@ -1,0 +1,27 @@
+Welcome to BSM System - Superadmin Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a Superadmin by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a Superadmin, you have the highest authority and can:
+- Everything Admin and System Admin can do, plus:
+- Deactivate Admins
+- Promote/create Superadmins
+- Configure global defaults (job numbering rules, zone thresholds, AI templates)
+- View all data and logs across the entire system
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact the Root Superadmin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+

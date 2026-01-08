@@ -1,0 +1,31 @@
+Welcome to BSM System - General Contractor Account
+
+Hello {{ user.first_name|default:user.username }},
+
+You have been invited to join the BSM system as a General Contractor by {{ invited_by.get_full_name|default:invited_by.username }}.
+
+Your Account Details:
+- Email: {{ user.email }}
+- Username: {{ user.username }}
+- Temporary Password: {{ password }}
+
+As a General Contractor, you can view:
+- Assigned projects only (as granted by Admin/PM)
+- Project status (% complete, Green/Yellow/Red indicators)
+- Workers on ground (count only)
+- Equipment on ground (count + categories)
+- Latest progress photos (shareable only)
+- AI-generated status reviews (sanitized version)
+- Download approved project progress reports
+
+Note: You cannot see employee names, wages, payroll, or internal financial details.
+
+Please change your password after your first login.
+
+Login URL: {{ login_url }}
+
+If you have any questions, please contact the Project Manager or Admin.
+
+---
+This is an automated message from BSM System. Please do not reply to this email.
+
