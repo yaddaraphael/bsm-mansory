@@ -148,6 +148,11 @@ function UsersPageContent() {
     fetchStats();
   }, [fetchStats]);
 
+  // Fetch users when filters or search change
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
   const canInvite = currentUser?.can_invite_users || false;
   const canManageUsers = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR'].includes(currentUser?.role || '');
 

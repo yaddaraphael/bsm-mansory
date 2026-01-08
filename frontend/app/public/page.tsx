@@ -15,6 +15,7 @@ import {
   MagnifyingGlassIcon,
   FunnelIcon,
   XMarkIcon,
+  ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
 
 interface PublicProject {
@@ -61,6 +62,17 @@ interface ProjectDetails {
   notes?: string;
   updated_at?: string;
   estimated_end_date?: string;
+  start_date?: string;
+  branch_name?: string;
+  production_percent_complete?: number;
+  financial_percent_complete?: number;
+  total_installed?: number;
+  total_quantity?: number;
+  schedule_status?: {
+    status: string;
+    days_late?: number;
+    forecast_date?: string;
+  };
   [key: string]: unknown;
 }
 
@@ -106,19 +118,26 @@ export default function PublicProjectsPage() {
     try {
       setLoadingDetails(true);
       setError('');
+      setPinError('');
       const params = new URLSearchParams();
       if (projectPin) {
         params.append('pin', projectPin);
       }
       const response = await api.get(`/projects/public/projects/${projectId}/?${params.toString()}`);
-      setProjectDetails(response.data);
-      if (projectPin) {
-        // Store authenticated PIN for this project
-        setAuthenticatedPins(prev => {
-          const newSet = new Set(prev);
-          newSet.add(projectId);
-          return newSet;
-        });
+      // Ensure we have the data before setting it
+      if (response.data) {
+        setProjectDetails(response.data);
+        if (projectPin) {
+          // Store authenticated PIN for this project
+          setAuthenticatedPins(prev => {
+            const newSet = new Set(prev);
+            newSet.add(projectId);
+            return newSet;
+          });
+        }
+      } else {
+        setProjectDetails(null);
+        setError('No data received from server');
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string }; status?: number } };
@@ -126,6 +145,7 @@ export default function PublicProjectsPage() {
         setProjectDetails(null);
         setPinError('Invalid PIN or project not accessible');
       } else {
+        setProjectDetails(null);
         setError(error.response?.data?.detail || 'Failed to load project details');
       }
     } finally {
@@ -175,9 +195,9 @@ export default function PublicProjectsPage() {
     }
   };
 
-  const getScheduleStatus = (project: PublicProject) => {
-    if (project?.schedule_status) {
-      return project.schedule_status.status;
+  const getScheduleStatus = (project: PublicProject | ProjectDetails) => {
+    if (project?.schedule_status && typeof project.schedule_status === 'object' && 'status' in project.schedule_status) {
+      return (project.schedule_status as { status: string }).status;
     }
     return 'GREEN';
   };
@@ -279,7 +299,9 @@ export default function PublicProjectsPage() {
       {/* Main Content - Sidebar Layout */}
       <div className="flex-1 flex overflow-hidden pt-20">
         {/* Fixed Left Sidebar - Project Cards */}
-        <div className="fixed left-0 top-20 bottom-0 w-full md:w-80 lg:w-96 bg-white border-r border-gray-200 flex flex-col z-20">
+        <div className={`fixed left-0 top-20 bottom-0 w-full md:w-80 lg:w-96 bg-white border-r border-gray-200 flex flex-col z-20 transition-transform duration-300 ${
+          selectedProject ? '-translate-x-full md:translate-x-0' : 'translate-x-0'
+        }`}>
           {/* Search and Filter Header */}
           <div className="p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
             <div className="flex items-center justify-between mb-3">
@@ -490,7 +512,9 @@ export default function PublicProjectsPage() {
         </div>
 
         {/* Right Side - Project Details (with left margin for sidebar) */}
-        <div className="flex-1 overflow-y-auto bg-gray-50 ml-0 md:ml-80 lg:ml-96">
+        <div className={`flex-1 overflow-y-auto bg-gray-50 transition-all duration-300 ${
+          selectedProject ? 'ml-0' : 'ml-0 md:ml-80 lg:ml-96'
+        }`}>
           {!selectedProject ? (
             <div className="flex items-center justify-center h-full p-8">
               <div className="text-center max-w-md">
@@ -503,6 +527,22 @@ export default function PublicProjectsPage() {
             </div>
           ) : (
             <div className="p-4 md:p-6 lg:p-8">
+              {/* Back Button - Mobile Only */}
+              <div className="md:hidden mb-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSelectedProject(null);
+                    setProjectDetails(null);
+                    setPin('');
+                    setPinError('');
+                  }}
+                  className="flex items-center"
+                >
+                  <ArrowLeftIcon className="h-5 w-5 mr-2" />
+                  Back to Projects
+                </Button>
+              </div>
               {selectedProject.public_pin && !authenticatedPins.has(selectedProject.id) ? (
                 // PIN Entry Form
                 <Card className="max-w-md mx-auto">
