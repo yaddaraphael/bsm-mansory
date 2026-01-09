@@ -252,7 +252,7 @@ function UsersPageContent() {
     <ProtectedRoute allowedRoles={['ADMIN', 'HR', 'SUPERADMIN', 'ROOT_SUPERADMIN']}>
       <div className="flex min-h-screen">
         <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+        <div className="flex-1 flex flex-col min-w-0 sidebar-content">
           <Header />
           <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
             <div className="max-w-7xl mx-auto">
@@ -575,7 +575,7 @@ export default function UsersPage() {
       <ProtectedRoute>
         <div className="flex min-h-screen">
           <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+          <div className="flex-1 flex flex-col min-w-0 sidebar-content">
             <Header />
             <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <div className="max-w-7xl mx-auto">

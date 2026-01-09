@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'equipment',
     'time_tracking',
     'audit',
+    'spectrum',
 ]
 
 MIDDLEWARE = [
@@ -188,3 +189,14 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@bsm.com')
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 
+# OAuth Settings
+# Microsoft Azure AD
+MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='')
+MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='')
+MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='common')
+MICROSOFT_REDIRECT_URI = config('MICROSOFT_REDIRECT_URI', default=f'{FRONTEND_URL}/api/auth/oauth/microsoft/callback/')
+
+# Google OAuth
+GOOGLE_CLIENT_ID = config('GOOGLE_CLIENT_ID', default='')
+GOOGLE_CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET', default='')
+GOOGLE_REDIRECT_URI = config('GOOGLE_REDIRECT_URI', default=f'{FRONTEND_URL}/api/auth/oauth/google/callback/')

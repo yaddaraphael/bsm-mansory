@@ -11,6 +11,10 @@ from .views import (
     ResendInvitationEmailView, CancelInvitationView, AllowedRolesView,
     ProjectAssignmentViewSet
 )
+from .oauth_views import (
+    MicrosoftOAuthInitiateView, MicrosoftOAuthCallbackView,
+    GoogleOAuthInitiateView, GoogleOAuthCallbackView
+)
 
 router = DefaultRouter()
 router.register(r'assignments', ProjectAssignmentViewSet, basename='assignment')
@@ -39,6 +43,11 @@ urlpatterns = [
     path('invited-users/<int:user_id>/resend-email/', ResendInvitationEmailView.as_view(), name='resend_invitation_email'),
     path('invited-users/<int:user_id>/cancel/', CancelInvitationView.as_view(), name='cancel_invitation'),
     path('allowed-roles/', AllowedRolesView.as_view(), name='allowed_roles'),
+    # OAuth endpoints
+    path('oauth/microsoft/initiate/', MicrosoftOAuthInitiateView.as_view(), name='microsoft_oauth_initiate'),
+    path('oauth/microsoft/callback/', MicrosoftOAuthCallbackView.as_view(), name='microsoft_oauth_callback'),
+    path('oauth/google/initiate/', GoogleOAuthInitiateView.as_view(), name='google_oauth_initiate'),
+    path('oauth/google/callback/', GoogleOAuthCallbackView.as_view(), name='google_oauth_callback'),
     path('', include(router.urls)),
 ]
 

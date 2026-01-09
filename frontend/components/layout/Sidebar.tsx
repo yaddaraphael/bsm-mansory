@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
+import { useSidebar } from './SidebarContext';
 import {
   HomeIcon,
   FolderIcon,
@@ -18,6 +19,9 @@ import {
   ArrowRightOnRectangleIcon,
   CloudIcon,
   ChevronDownIcon,
+  SignalIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -30,6 +34,7 @@ export default function Sidebar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [usersDropdownOpen, setUsersDropdownOpen] = useState(false);
   const [reportsDropdownOpen, setReportsDropdownOpen] = useState(false);
+  const { isCollapsed, toggleCollapse } = useSidebar();
   
   const isSuperadmin = user?.role === 'ROOT_SUPERADMIN' || user?.role === 'SUPERADMIN';
   
@@ -49,6 +54,7 @@ export default function Sidebar() {
     { name: 'Users', href: '/users', icon: UserGroupIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR'], hasDropdown: true },
     { name: 'Reports', href: '/reports', icon: ChartBarIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'SUPERINTENDENT', 'FOREMAN'], hasDropdown: true },
     { name: 'SharePoint', href: '/sharepoint', icon: CloudIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'HR', 'FINANCE'] },
+    { name: 'Spectrum', href: '/spectrum', icon: SignalIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'HR', 'FINANCE'] },
     { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, roles: 'all' },
   ];
 
@@ -139,6 +145,14 @@ export default function Sidebar() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isMobileMenuOpen]);
 
+  // Close dropdowns when collapsing
+  useEffect(() => {
+    if (isCollapsed) {
+      setUsersDropdownOpen(false);
+      setReportsDropdownOpen(false);
+    }
+  }, [isCollapsed]);
+
   return (
     <>
       {/* Mobile Menu Button */}
@@ -165,19 +179,41 @@ export default function Sidebar() {
       {/* Sidebar */}
       <div
         className={clsx(
-          'sidebar-container fixed inset-y-0 left-0 z-40 w-64 bg-gray-900 text-white min-h-screen transform transition-transform duration-300 ease-in-out',
-          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          'sidebar-container fixed inset-y-0 left-0 z-40 bg-gray-900 text-white min-h-screen transform transition-all duration-300 ease-in-out',
+          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+          // On mobile/tablet, always show full width (w-64). On desktop, use collapsed state
+          'w-64',
+          isCollapsed && 'lg:w-20'
         )}
       >
-        <div className="p-4 md:p-6 border-b border-gray-800">
-          <div className="flex items-center space-x-3">
-            <div className="bg-primary rounded-lg p-2 flex-shrink-0">
-              <BuildingOfficeIcon className="h-6 w-6 text-white" />
+        {/* Header with Toggle Button */}
+        <div className={clsx('p-4 border-b border-gray-800', isCollapsed ? 'lg:px-2' : 'md:p-6')}>
+          <div className="flex items-center justify-between">
+            <div className={clsx('flex items-center', isCollapsed ? 'lg:justify-center lg:w-full' : 'space-x-3')}>
+              <div className="bg-primary rounded-lg p-2 flex-shrink-0">
+                <BuildingOfficeIcon className="h-6 w-6 text-white" />
+              </div>
+              <div className={clsx('min-w-0', isCollapsed && 'lg:hidden')}>
+                <h1 className="text-xl font-bold text-white truncate">BSM</h1>
+                <p className="text-xs text-gray-400 truncate">Building Systems</p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1 className="text-xl font-bold text-white truncate">BSM</h1>
-              <p className="text-xs text-gray-400 truncate">Building Systems</p>
-            </div>
+            {/* Collapse Toggle Button - Desktop Only, positioned to not conflict with mobile close */}
+            <button
+              onClick={toggleCollapse}
+              className={clsx(
+                'hidden lg:flex items-center justify-center w-8 h-8 rounded-md hover:bg-gray-800 transition-colors flex-shrink-0',
+                isCollapsed && 'mx-auto'
+              )}
+              aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {isCollapsed ? (
+                <ChevronRightIcon className="h-5 w-5 text-gray-300" />
+              ) : (
+                <ChevronLeftIcon className="h-5 w-5 text-gray-300" />
+              )}
+            </button>
           </div>
         </div>
         <nav className="mt-6 overflow-y-auto h-[calc(100vh-180px)]">
@@ -193,6 +229,27 @@ export default function Sidebar() {
             
             if (hasDropdown && item.name === 'Users') {
               const isUsersPage = pathname?.startsWith('/users');
+              // On mobile, always show full with text. On desktop, show collapsed version when collapsed
+              if (isCollapsed) {
+                return (
+                  <Link
+                    key={item.name}
+                    href="/users"
+                    className={clsx(
+                      'flex items-center px-4 md:px-6 py-3 text-sm font-medium transition-colors',
+                      'lg:justify-center lg:px-2',
+                      isUsersPage
+                        ? 'bg-primary text-white'
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    )}
+                    title={item.name}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  >
+                    <item.icon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
+                    <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>{item.name}</span>
+                  </Link>
+                );
+              }
               return (
                 <div key={item.name}>
                   <button
@@ -257,6 +314,27 @@ export default function Sidebar() {
 
             if (hasDropdown && item.name === 'Reports') {
               const isReportsPage = pathname?.startsWith('/reports');
+              // On mobile, always show full with text. On desktop, show collapsed version when collapsed
+              if (isCollapsed) {
+                return (
+                  <Link
+                    key={item.name}
+                    href="/reports"
+                    className={clsx(
+                      'flex items-center px-4 md:px-6 py-3 text-sm font-medium transition-colors',
+                      'lg:justify-center lg:px-2',
+                      isReportsPage
+                        ? 'bg-primary text-white'
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    )}
+                    title={item.name}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  >
+                    <item.icon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
+                    <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>{item.name}</span>
+                  </Link>
+                );
+              }
               return (
                 <div key={item.name}>
                   <button
@@ -309,31 +387,39 @@ export default function Sidebar() {
                 key={item.name}
                 href={item.href}
                 className={clsx(
-                  'flex items-center px-4 md:px-6 py-3 text-sm font-medium transition-colors',
+                  'flex items-center text-sm font-medium transition-colors',
+                  isCollapsed 
+                    ? 'lg:justify-center lg:px-2 px-4 md:px-6 py-3' 
+                    : 'px-4 md:px-6 py-3',
                   isActive
                     ? 'bg-primary text-white'
                     : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                 )}
+                title={isCollapsed ? item.name : undefined}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                <item.icon className="mr-3 h-5 w-5 flex-shrink-0" />
-                <span className="truncate">{item.name}</span>
+                <item.icon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
+                <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>{item.name}</span>
               </Link>
             );
           })}
         </nav>
         
         {/* Logout Button at Bottom */}
-        <div className="absolute bottom-0 left-0 right-0 border-t border-gray-800 p-4">
+        <div className={clsx('absolute bottom-0 left-0 right-0 border-t border-gray-800', isCollapsed ? 'p-2' : 'p-4')}>
           <button
             onClick={() => {
               logout();
               router.push('/login');
             }}
-            className="w-full flex items-center px-4 md:px-6 py-3 text-sm font-medium text-gray-300 hover:bg-gray-800 hover:text-white transition-colors rounded"
+            className={clsx(
+              'w-full flex items-center text-sm font-medium text-gray-300 hover:bg-gray-800 hover:text-white transition-colors rounded',
+              isCollapsed ? 'lg:justify-center lg:px-2 px-4 md:px-6 py-3' : 'px-4 md:px-6 py-3'
+            )}
+            title={isCollapsed ? 'Logout' : undefined}
           >
-            <ArrowRightOnRectangleIcon className="mr-3 h-5 w-5 flex-shrink-0" />
-            <span className="truncate">Logout</span>
+            <ArrowRightOnRectangleIcon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
+            <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>Logout</span>
           </button>
         </div>
       </div>

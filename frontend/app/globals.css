@@ -6,6 +6,7 @@
   --primary-color: #772025;
   --primary-hover: #5a181c;
   --primary-light: #a03a42;
+  --sidebar-width: 256px; /* Default sidebar width (w-64 = 256px) */
 }
 
 body {
@@ -28,3 +29,35 @@ body {
   @apply bg-white rounded-lg shadow-md p-6;
 }
 
+/* Dynamic sidebar width utilities */
+@media (min-width: 1024px) {
+  .sidebar-content {
+    margin-left: var(--sidebar-width);
+    transition: margin-left 0.3s ease-in-out;
+  }
+  
+  .sidebar-header {
+    left: var(--sidebar-width);
+    right: 0;
+    transition: left 0.3s ease-in-out;
+  }
+  
+  .sidebar-margin {
+    margin-left: var(--sidebar-width);
+  }
+}
+
+@media (max-width: 1023px) {
+  .sidebar-content {
+    margin-left: 0;
+  }
+  
+  .sidebar-header {
+    left: 0;
+    right: 0;
+  }
+  
+  .sidebar-margin {
+    margin-left: 0;
+  }
+}

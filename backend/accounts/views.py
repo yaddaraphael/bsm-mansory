@@ -507,8 +507,8 @@ class UserListView(generics.ListAPIView):
         return queryset.order_by('-created_at')
 
 
-class UserDetailView(generics.RetrieveAPIView):
-    """Get user details by ID."""
+class UserDetailView(generics.RetrieveAPIView, generics.DestroyAPIView):
+    """Get user details by ID or delete user."""
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
     
@@ -526,6 +526,65 @@ class UserDetailView(generics.RetrieveAPIView):
         queryset = self.get_queryset()
         obj = get_object_or_404(queryset, pk=self.kwargs['pk'])
         return obj
+    
+    def destroy(self, request, *args, **kwargs):
+        """Delete a user."""
+        # Check permissions - only admins and HR can delete users
+        if request.user.role not in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR']:
+            return Response(
+                {'detail': 'You do not have permission to delete users.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        user_to_delete = self.get_object()
+        
+        # Prevent users from deleting themselves
+        if request.user.id == user_to_delete.id:
+            return Response(
+                {'detail': 'You cannot delete your own account.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Prevent deleting root superadmin
+        if user_to_delete.role == 'ROOT_SUPERADMIN' and request.user.role != 'ROOT_SUPERADMIN':
+            return Response(
+                {'detail': 'You do not have permission to delete a root superadmin.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Log the deletion action
+        user_name = user_to_delete.get_full_name() or user_to_delete.username
+        log_action(
+            user=request.user,
+            action='DELETE',
+            content_type='user',
+            object_id=user_to_delete.id,
+            object_repr=f'{user_name} ({user_to_delete.email})',
+            old_value='ACTIVE',
+            new_value='DELETED',
+        )
+        
+        # Store user info before deletion for audit log
+        user_id_for_log = user_to_delete.id
+        user_email_for_log = user_to_delete.email
+        user_name_for_log = user_name
+        user_role_for_log = user_to_delete.role
+        
+        # Delete the user
+        user_to_delete.delete()
+        
+        return Response(
+            {
+                'detail': 'User deleted successfully.',
+                'deleted_user': {
+                    'id': user_id_for_log,
+                    'name': user_name_for_log,
+                    'email': user_email_for_log,
+                    'role': user_role_for_log,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 class UserActivateDeactivateView(APIView):

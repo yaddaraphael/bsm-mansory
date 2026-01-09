@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/equipment/', include('equipment.urls')),
     path('api/time/', include('time_tracking.urls')),
     path('api/audit/', include('audit.urls')),
+    path('api/spectrum/', include('spectrum.urls')),
 ]
 
 # Serve media files in development
