@@ -298,8 +298,8 @@ export default function PublicProjectsPage() {
 
       {/* Main Content - Sidebar Layout */}
       <div className="flex-1 flex overflow-hidden pt-20">
-        {/* Fixed Left Sidebar - Project Cards */}
-        <div className={`fixed left-0 top-20 bottom-0 w-full md:w-80 lg:w-96 bg-white border-r border-gray-200 flex flex-col z-20 transition-transform duration-300 ${
+        {/* Left Sidebar - Project Cards */}
+        <div className={`fixed md:relative left-0 top-20 md:top-0 bottom-0 w-full md:w-80 lg:w-96 bg-white border-r border-gray-200 flex flex-col z-20 transition-transform duration-300 flex-shrink-0 ${
           selectedProject ? '-translate-x-full md:translate-x-0' : 'translate-x-0'
         }`}>
           {/* Search and Filter Header */}
@@ -511,9 +511,9 @@ export default function PublicProjectsPage() {
           </div>
         </div>
 
-        {/* Right Side - Project Details (with left margin for sidebar) */}
-        <div className={`flex-1 overflow-y-auto bg-gray-50 transition-all duration-300 ${
-          selectedProject ? 'ml-0' : 'ml-0 md:ml-80 lg:ml-96'
+        {/* Right Side - Project Details */}
+        <div className={`flex-1 overflow-y-auto bg-gray-50 transition-all duration-300 min-w-0 ${
+          selectedProject ? 'ml-0' : 'ml-0 md:ml-0'
         }`}>
           {!selectedProject ? (
             <div className="flex items-center justify-center h-full p-8">

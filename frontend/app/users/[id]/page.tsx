@@ -89,6 +89,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const [actionLoading, setActionLoading] = useState(false);
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
   const [showActivateModal, setShowActivateModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [modalMessage, setModalMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const canManageUsers = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR'].includes(currentUser?.role || '');
@@ -272,18 +273,17 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   };
 
   const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
-      return;
-    }
-
     setActionLoading(true);
+    setModalMessage(null);
     try {
       await api.delete(`/auth/users/${id}/`);
-      alert('User deleted successfully');
-      router.push('/users');
+      setModalMessage({ type: 'success', message: 'User deleted successfully' });
+      setTimeout(() => {
+        router.push('/users');
+      }, 1500);
     } catch (error: unknown) {
       const errorMessage = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail || 'Failed to delete user';
-      alert(errorMessage);
+      setModalMessage({ type: 'error', message: errorMessage });
     } finally {
       setActionLoading(false);
     }
@@ -490,7 +490,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                       <Button
                         variant="secondary"
                         className="w-full text-red-600 hover:text-red-700"
-                        onClick={handleDelete}
+                        onClick={() => setShowDeleteModal(true)}
                         disabled={actionLoading}
                       >
                         <TrashIcon className="h-5 w-5 mr-2 inline" />
@@ -809,6 +809,63 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                       disabled={actionLoading}
                     >
                       {actionLoading ? 'Activating...' : 'Yes, Activate User'}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Modal>
+
+            {/* Delete User Modal */}
+            <Modal
+              isOpen={showDeleteModal}
+              onClose={() => {
+                if (!actionLoading) {
+                  setShowDeleteModal(false);
+                  setModalMessage(null);
+                }
+              }}
+              title="Delete User"
+              size="md"
+            >
+              {modalMessage ? (
+                <div className={`p-4 rounded-lg ${modalMessage.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                  <p className="font-medium">{modalMessage.message}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                    <p className="text-red-800 font-medium mb-2">⚠️ Warning: This action cannot be undone</p>
+                    <p className="text-red-700 text-sm">
+                      Deleting this user will permanently remove their account and all associated data from the system. This includes:
+                    </p>
+                    <ul className="text-red-700 text-sm mt-2 list-disc list-inside space-y-1">
+                      <li>User account and login credentials</li>
+                      <li>Time entries and work history</li>
+                      <li>Project assignments</li>
+                      <li>All associated records</li>
+                    </ul>
+                  </div>
+                  <p className="text-gray-700 mb-4">
+                    Are you absolutely sure you want to delete <strong>{user?.first_name} {user?.last_name}</strong> ({user?.email})?
+                  </p>
+                  <div className="flex justify-end space-x-3">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setShowDeleteModal(false);
+                        setModalMessage(null);
+                      }}
+                      disabled={actionLoading}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="red"
+                      onClick={handleDelete}
+                      isLoading={actionLoading}
+                      disabled={actionLoading}
+                    >
+                      {actionLoading ? 'Deleting...' : 'Yes, Delete User'}
                     </Button>
                   </div>
                 </>
