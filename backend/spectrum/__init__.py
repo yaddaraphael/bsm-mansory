@@ -1,1 +1,1 @@
-# Spectrum app for Trimble AppExchange integration
+# Spectrum integration app

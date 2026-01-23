@@ -11,10 +11,10 @@ class CanInviteUsers(permissions.BasePermission):
 
 
 class IsRootSuperadmin(permissions.BasePermission):
-    """Permission to check if user is root superadmin."""
+    """Permission to check if user is root superadmin or admin."""
     
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        return request.user.is_root_superadmin()
+        return request.user.role in ['ROOT_SUPERADMIN', 'ADMIN']
 

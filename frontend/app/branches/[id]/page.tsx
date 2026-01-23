@@ -73,6 +73,10 @@ export default function BranchDetailPage() {
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [contactLoading, setContactLoading] = useState(false);
+  const [portalPassword, setPortalPassword] = useState('');
+  const [portalPasswordStatus, setPortalPasswordStatus] = useState<{ has_password: boolean } | null>(null);
+  const [portalPasswordLoading, setPortalPasswordLoading] = useState(false);
+  const [portalPasswordMessage, setPortalPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [contactForm, setContactForm] = useState({
     name: '',
@@ -86,6 +90,7 @@ export default function BranchDetailPage() {
 
   const canViewDetails = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR', 'FINANCE'].includes(user?.role || '');
   const canManageContacts = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '');
+  const canManagePortalPassword = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'BRANCH_MANAGER'].includes(user?.role || '');
 
   const fetchBranchDetails = useCallback(async () => {
     try {
@@ -95,15 +100,41 @@ export default function BranchDetailPage() {
       const response = await api.get(`/branches/${branchId}/`);
       const branch = response.data;
       
+      // Fetch portal password status if user can manage it
+      if (canManagePortalPassword) {
+        try {
+          const passwordStatus = await api.get(`/branches/${branchId}/portal-password-status/`);
+          setPortalPasswordStatus(passwordStatus.data);
+        } catch {
+          setPortalPasswordStatus({ has_password: false });
+        }
+      }
+      
+      // Fetch Spectrum jobs for this division
+      let spectrumJobs: Array<{ id?: string | number; job_number?: string; name?: string; status?: string; [key: string]: unknown }> = [];
+      if (branch.spectrum_division_code) {
+        try {
+          const jobsResponse = await api.get(`/spectrum/jobs/list/?division=${branch.spectrum_division_code}`);
+          spectrumJobs = jobsResponse.data.results || jobsResponse.data || [];
+        } catch (err) {
+          console.warn('Failed to fetch Spectrum jobs:', err);
+        }
+      }
+      
       // Set branch data in a format that matches the expected structure
       setBranchData({
         branch: branch,
         employee_count: 0,
         active_employees: 0,
         employees: [],
-        project_count: 0,
-        active_projects: 0,
-        projects: [],
+        project_count: spectrumJobs.length,
+        active_projects: spectrumJobs.filter((j: { status_code?: string; [key: string]: unknown }) => j.status_code === 'A').length,
+        projects: spectrumJobs.map((job: { job_number?: string; job_description?: string; status_code?: string; id?: string | number; [key: string]: unknown }) => ({
+          id: (job.job_number || job.id) as string | number,
+          job_number: job.job_number,
+          name: job.job_description || 'N/A',
+          status: job.status_code === 'A' ? 'ACTIVE' : job.status_code === 'I' ? 'INACTIVE' : 'COMPLETED',
+        })),
         revenue: {
           total_contract_value: 0,
           total_contract_balance: 0,
@@ -120,7 +151,7 @@ export default function BranchDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [branchId]);
+  }, [branchId, canManagePortalPassword]);
 
   useEffect(() => {
     if (branchId && canViewDetails) {
@@ -186,6 +217,47 @@ export default function BranchDetailPage() {
     setShowAddContact(true);
   };
 
+  const handleSetPortalPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPortalPasswordMessage(null);
+    
+    if (!portalPassword || portalPassword.length < 4) {
+      setPortalPasswordMessage({
+        type: 'error',
+        text: 'Password must be at least 4 characters long.',
+      });
+      return;
+    }
+
+    setPortalPasswordLoading(true);
+    try {
+      await api.post(`/branches/${branchId}/set-portal-password/`, {
+        password: portalPassword,
+      });
+      
+      // Refresh password status
+      const passwordStatus = await api.get(`/branches/${branchId}/portal-password-status/`);
+      setPortalPasswordStatus(passwordStatus.data);
+      
+      setPortalPassword('');
+      setPortalPasswordMessage({
+        type: 'success',
+        text: 'Portal password set successfully! Email notifications have been sent to administrators.',
+      });
+      
+      // Clear message after 5 seconds
+      setTimeout(() => setPortalPasswordMessage(null), 5000);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setPortalPasswordMessage({
+        type: 'error',
+        text: error.response?.data?.detail || 'Failed to set portal password. Please try again.',
+      });
+    } finally {
+      setPortalPasswordLoading(false);
+    }
+  };
+
   if (!canViewDetails) {
     return (
       <ProtectedRoute>
@@ -197,7 +269,7 @@ export default function BranchDetailPage() {
               <div className="max-w-7xl mx-auto">
                 <Card>
                   <div className="text-center py-8">
-                    <p className="text-red-600">You don&apos;t have permission to view branch details.</p>
+                    <p className="text-red-600">You don&apos;t have permission to view division details.</p>
                   </div>
                 </Card>
               </div>
@@ -237,9 +309,9 @@ export default function BranchDetailPage() {
               <div className="max-w-7xl mx-auto">
                 <Card>
                   <div className="text-center py-8">
-                    <p className="text-red-600">{error || 'Branch not found'}</p>
+                    <p className="text-red-600">{error || 'Division not found'}</p>
                     <Button onClick={() => router.push('/branches')} className="mt-4">
-                      Back to Branches
+                      Back to Divisions
                     </Button>
                   </div>
                 </Card>
@@ -306,7 +378,7 @@ export default function BranchDetailPage() {
                   <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                   </svg>
-                  Back to Branches
+                  Back to Divisions
                 </button>
                 
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -316,7 +388,7 @@ export default function BranchDetailPage() {
                     </div>
                     <div>
                       <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-1">
-                        {branch.name || 'Branch'}
+                        {branch.name || 'Division'}
                       </h1>
                       <p className="text-base md:text-lg text-gray-500">Code: {branch.code || 'N/A'}</p>
                     </div>
@@ -326,16 +398,16 @@ export default function BranchDetailPage() {
               </div>
 
 
-              {/* Branch Information - Matching Creation Form Structure */}
-              <Card title="Branch Information" className="mb-6">
+              {/* Division Information - Matching Creation Form Structure */}
+              <Card title="Division Information" className="mb-6">
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Branch Name</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Division Name</label>
                       <p className="text-base text-gray-900 font-medium">{branch.name || 'N/A'}</p>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Branch Code</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Division Code</label>
                       <p className="text-base text-gray-900 font-medium">{branch.code || 'N/A'}</p>
                     </div>
                   </div>
@@ -400,6 +472,72 @@ export default function BranchDetailPage() {
                 </div>
               </Card>
 
+              {/* Portal Password Section */}
+              {canManagePortalPassword && (
+                <Card title="Public Portal Password" className="mb-6">
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <p className="text-sm text-blue-800">
+                        <strong>Status:</strong> {portalPasswordStatus?.has_password ? 'Password is set' : 'No password set'}
+                      </p>
+                      <p className="text-xs text-blue-600 mt-2">
+                        The public portal for this division can be accessed at:{' '}
+                        <code className="bg-white px-2 py-1 rounded">
+                          /public/branch/{branch.spectrum_division_code || branch.code || branchId}/
+                        </code>
+                      </p>
+                      <p className="text-xs text-blue-600 mt-1">
+                        Only projects marked as public from this division will be visible on the portal.
+                      </p>
+                    </div>
+                    
+                    {portalPasswordMessage && (
+                      <div
+                        className={`p-4 rounded-lg border ${
+                          portalPasswordMessage.type === 'success'
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-red-50 text-red-700 border-red-200'
+                        }`}
+                      >
+                        <div className="flex items-center">
+                          {portalPasswordMessage.type === 'success' ? (
+                            <svg className="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                          ) : (
+                            <svg className="h-5 w-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                          <span>{portalPasswordMessage.text}</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    <form onSubmit={handleSetPortalPassword} className="space-y-4">
+                      <Input
+                        label="Portal Password"
+                        type="password"
+                        value={portalPassword}
+                        onChange={(e) => setPortalPassword(e.target.value)}
+                        required
+                        showPasswordToggle
+                        helpText="Minimum 4 characters. This password will be required to access the division's public portal."
+                      />
+                      <Button type="submit" isLoading={portalPasswordLoading}>
+                        {portalPasswordStatus?.has_password ? 'Update Portal Password' : 'Set Portal Password'}
+                      </Button>
+                    </form>
+                    
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <p className="text-xs text-yellow-800">
+                        <strong>Note:</strong> Password changes are logged and email notifications are sent to administrators and branch managers.
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
               {/* Employees Section */}
               <Card title={`Employees (${branchData.employee_count || 0})`} className="mb-6">
                 {(branchData.employees || []).length > 0 ? (
@@ -424,7 +562,7 @@ export default function BranchDetailPage() {
                     onRowClick={(row) => router.push(`/projects/${row.id}`)}
                   />
                 ) : (
-                  <p className="text-gray-500 text-center py-4">No projects for this branch</p>
+                  <p className="text-gray-500 text-center py-4">No projects for this division</p>
                 )}
               </Card>
 

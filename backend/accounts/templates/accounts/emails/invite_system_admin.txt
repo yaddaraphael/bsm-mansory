@@ -11,7 +11,7 @@ Your Account Details:
 
 As a System Admin, you can:
 - Everything Admin can do, plus:
-- Configure integrations (Spectrum/Traqspera/SharePoint)
+- Configure integrations (Traqspera/SharePoint)
 - Manage sync schedules and mapping rules
 - Manage authentication settings (SSO, MFA policies)
 - System monitoring (errors, retries, performance)

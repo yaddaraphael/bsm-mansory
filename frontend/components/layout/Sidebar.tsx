@@ -8,20 +8,17 @@ import { useSidebar } from './SidebarContext';
 import {
   HomeIcon,
   FolderIcon,
-  ClockIcon,
-  WrenchScrewdriverIcon,
   UserGroupIcon,
-  ChartBarIcon,
   Cog6ToothIcon,
   BuildingOfficeIcon,
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon,
-  CloudIcon,
   ChevronDownIcon,
-  SignalIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  SignalIcon,
+  ClipboardDocumentCheckIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -33,28 +30,18 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [usersDropdownOpen, setUsersDropdownOpen] = useState(false);
-  const [reportsDropdownOpen, setReportsDropdownOpen] = useState(false);
   const { isCollapsed, toggleCollapse } = useSidebar();
-  
-  const isSuperadmin = user?.role === 'ROOT_SUPERADMIN' || user?.role === 'SUPERADMIN';
   
   const baseNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon, roles: 'all' },
     { name: 'Projects', href: '/projects', icon: FolderIcon, roles: 'all' },
-    { name: 'Branches', href: '/branches', icon: BuildingOfficeIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN'] },
-  ];
-  
-  const timeNavigation = [
-    { name: 'Clock In/Out', href: '/time/clock', icon: ClockIcon, roles: ['LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER', 'FOREMAN', 'SUPERINTENDENT'] },
-    { name: 'My Time', href: '/time/my-time', icon: ClockIcon, roles: ['LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER', 'FOREMAN', 'SUPERINTENDENT'] },
+    { name: 'Divisions', href: '/branches', icon: BuildingOfficeIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'] },
   ];
   
   const adminNavigation = [
-    { name: 'Equipment', href: '/equipment', icon: WrenchScrewdriverIcon, roles: 'all' },
-    { name: 'Users', href: '/users', icon: UserGroupIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR'], hasDropdown: true },
-    { name: 'Reports', href: '/reports', icon: ChartBarIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'SUPERINTENDENT', 'FOREMAN'], hasDropdown: true },
-    { name: 'SharePoint', href: '/sharepoint', icon: CloudIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'HR', 'FINANCE'] },
-    { name: 'Spectrum', href: '/spectrum', icon: SignalIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER', 'HR', 'FINANCE'] },
+    { name: 'Users', href: '/users', icon: UserGroupIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'], hasDropdown: true },
+    { name: 'Meetings', href: '/meetings', icon: ClipboardDocumentCheckIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'BRANCH_MANAGER', 'PROJECT_MANAGER'] },
+    { name: 'Spectrum', href: '/spectrum', icon: SignalIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'] },
     { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, roles: 'all' },
   ];
 
@@ -65,38 +52,21 @@ export default function Sidebar() {
 
   const roleOptions: RoleOption[] = [
     { value: '', label: 'All Users' },
-    { value: 'LABORER', label: 'Laborers' },
-    { value: 'MASON', label: 'Masons' },
-    { value: 'OPERATOR', label: 'Operators' },
-    { value: 'BRICKLAYER', label: 'Bricklayers' },
-    { value: 'PLASTER', label: 'Plasters' },
-    { value: 'FOREMAN', label: 'Foremen' },
-    { value: 'SUPERINTENDENT', label: 'Superintendents' },
-    { value: 'PROJECT_MANAGER', label: 'Project Managers' },
-    { value: 'GENERAL_CONTRACTOR', label: 'General Contractors' },
-    { value: 'HR', label: 'HR' },
-    { value: 'FINANCE', label: 'Finance' },
-    { value: 'AUDITOR', label: 'Auditors' },
-    { value: 'ADMIN', label: 'Admins' },
-    { value: 'SYSTEM_ADMIN', label: 'System Admins' },
-    { value: 'SUPERADMIN', label: 'Superadmins' },
     { value: 'ROOT_SUPERADMIN', label: 'Root Superadmins' },
+    { value: 'ADMIN', label: 'Admins' },
+    { value: 'BRANCH_MANAGER', label: 'Branch Managers' },
+    { value: 'PROJECT_MANAGER', label: 'Project Managers' },
   ];
   
   const getNavigation = () => {
     const nav: typeof baseNavigation = [];
     
-    // Add base navigation
-    nav.push(...baseNavigation);
-    
-    // Add time navigation if not superadmin
-    if (!isSuperadmin) {
-      timeNavigation.forEach(item => {
-        if ((typeof item.roles === 'string' && item.roles === 'all') || (Array.isArray(item.roles) && item.roles.includes(user?.role || ''))) {
-          nav.push(item);
-        }
-      });
-    }
+    // Add base navigation (filter by roles)
+    baseNavigation.forEach(item => {
+      if ((typeof item.roles === 'string' && item.roles === 'all') || (Array.isArray(item.roles) && item.roles.includes(user?.role || ''))) {
+        nav.push(item);
+      }
+    });
     
     // Add admin navigation
     adminNavigation.forEach(item => {
@@ -125,12 +95,6 @@ export default function Sidebar() {
     }
   }, [pathname]);
 
-  // Keep reports dropdown open when on reports page
-  useEffect(() => {
-    if (pathname?.startsWith('/reports')) {
-      setReportsDropdownOpen(true);
-    }
-  }, [pathname]);
 
   // Close mobile menu on outside click
   useEffect(() => {
@@ -149,7 +113,6 @@ export default function Sidebar() {
   useEffect(() => {
     if (isCollapsed) {
       setUsersDropdownOpen(false);
-      setReportsDropdownOpen(false);
     }
   }, [isCollapsed]);
 
@@ -312,75 +275,6 @@ export default function Sidebar() {
               );
             }
 
-            if (hasDropdown && item.name === 'Reports') {
-              const isReportsPage = pathname?.startsWith('/reports');
-              // On mobile, always show full with text. On desktop, show collapsed version when collapsed
-              if (isCollapsed) {
-                return (
-                  <Link
-                    key={item.name}
-                    href="/reports"
-                    className={clsx(
-                      'flex items-center px-4 md:px-6 py-3 text-sm font-medium transition-colors',
-                      'lg:justify-center lg:px-2',
-                      isReportsPage
-                        ? 'bg-primary text-white'
-                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                    )}
-                    title={item.name}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                  >
-                    <item.icon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
-                    <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>{item.name}</span>
-                  </Link>
-                );
-              }
-              return (
-                <div key={item.name}>
-                  <button
-                    onClick={() => setReportsDropdownOpen(!reportsDropdownOpen)}
-                    className={clsx(
-                      'w-full flex items-center justify-between px-4 md:px-6 py-3 text-sm font-medium transition-all duration-200',
-                      isReportsPage || reportsDropdownOpen
-                        ? 'bg-primary text-white'
-                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                    )}
-                  >
-                    <div className="flex items-center">
-                      <item.icon className="mr-3 h-5 w-5 flex-shrink-0" />
-                      <span className="truncate">{item.name}</span>
-                    </div>
-                    <div className="flex-shrink-0 transition-transform duration-200" style={{
-                      transform: reportsDropdownOpen ? 'rotate(0deg)' : 'rotate(-90deg)'
-                    }}>
-                      <ChevronDownIcon className="h-4 w-4" />
-                    </div>
-                  </button>
-                  <div 
-                    className={clsx(
-                      'overflow-hidden transition-all duration-300 ease-in-out',
-                      reportsDropdownOpen ? 'max-h-[200px] opacity-100' : 'max-h-0 opacity-0'
-                    )}
-                  >
-                    <div className="bg-gray-800 border-t border-gray-700">
-                      <Link
-                        href="/reports/daily"
-                        className={clsx(
-                          'flex items-center px-8 md:px-10 py-2.5 text-sm transition-all duration-150',
-                          'border-l-2',
-                          pathname?.startsWith('/reports/daily')
-                            ? 'bg-gray-700 text-white border-primary'
-                            : 'text-gray-400 hover:bg-gray-700 hover:text-white border-transparent hover:border-gray-600'
-                        )}
-                        onClick={() => setIsMobileMenuOpen(false)}
-                      >
-                        <span className="truncate font-normal">Daily Reports from Foreman</span>
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            }
             
             return (
               <Link

@@ -5,6 +5,11 @@ Django settings for bsm_project project.
 from pathlib import Path
 from decouple import config
 import os
+import warnings
+
+# Suppress pkg_resources deprecation warning from rest_framework_simplejwt
+# This is a known issue in the package and will be fixed in a future version
+warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -38,10 +43,9 @@ INSTALLED_APPS = [
     'accounts',
     'branches',
     'projects',
-    'equipment',
-    'time_tracking',
     'audit',
     'spectrum',
+    'meetings',
 ]
 
 MIDDLEWARE = [
@@ -173,6 +177,10 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+# Data Upload Settings
+# Increase the limit for admin bulk actions (e.g., deleting many projects at once)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000  # Default is 1000, increased to handle bulk operations
+
 # Email Settings
 EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
@@ -191,12 +199,77 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 
 # OAuth Settings
 # Microsoft Azure AD
-MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='')
-MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='')
-MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='common')
+MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='95e54424-01a1-4896-8ba4-eb8ad24b1d83')
+MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='b02aa628-b02e-414c-82f1-7d868c45f0b8')
+MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='95339773-e6b8-47aa-bbb7-e3d6daee096a')
 MICROSOFT_REDIRECT_URI = config('MICROSOFT_REDIRECT_URI', default=f'{FRONTEND_URL}/api/auth/oauth/microsoft/callback/')
 
 # Google OAuth
 GOOGLE_CLIENT_ID = config('GOOGLE_CLIENT_ID', default='')
 GOOGLE_CLIENT_SECRET = config('GOOGLE_CLIENT_SECRET', default='')
 GOOGLE_REDIRECT_URI = config('GOOGLE_REDIRECT_URI', default=f'{FRONTEND_URL}/api/auth/oauth/google/callback/')
+
+# Spectrum Data Exchange SOAP/WSDL Settings
+SPECTRUM_ENDPOINT = config('SPECTRUM_ENDPOINT', default='https://buildersstonekc.dexterchaney.com:8482')
+SPECTRUM_AUTHORIZATION_ID = config('SPECTRUM_AUTHORIZATION_ID', default='')
+SPECTRUM_COMPANY_CODE = config('SPECTRUM_COMPANY_CODE', default='BSM')
+SPECTRUM_TIMEOUT = config('SPECTRUM_TIMEOUT', default=30, cast=int)
+
+# Public Portal Settings
+# Password for HQ public portal (all projects). Leave blank to disable.
+HQ_PORTAL_PASSWORD = config('HQ_PORTAL_PASSWORD', default='')
+
+# Celery Configuration
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# Celery Beat Schedule (Periodic Tasks)
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'sync-spectrum-jobs-hourly': {
+        'task': 'spectrum.tasks.sync_spectrum_jobs_task',
+        'schedule': crontab(minute=0),  # Run every hour at minute 0
+    },
+}
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'spectrum': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

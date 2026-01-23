@@ -362,11 +362,6 @@
 ## Phase 8: Integrations & Enhancements (Week 9-10)
 
 ### 8.1 External Integrations
-- [ ] **Spectrum Integration**
-  - Sync employee data
-  - Export time data
-  - Payroll integration
-
 - [ ] **Traqspera Integration**
   - Equipment sync
   - Billing integration

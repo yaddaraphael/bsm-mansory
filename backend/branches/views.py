@@ -1,12 +1,21 @@
-from rest_framework import viewsets, generics
-from rest_framework.decorators import action
+from rest_framework import viewsets, generics, status
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password, check_password
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.conf import settings
 from .models import Branch, BranchContact
 from .serializers import BranchSerializer, BranchContactSerializer
 from .permissions import BranchViewSetPermission
+from accounts.permissions import IsRootSuperadmin
+from audit.utils import log_action
+import logging
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -322,6 +331,161 @@ class BranchViewSet(viewsets.ModelViewSet):
                 serializer.save()
                 return Response(serializer.data, status=201)
             return Response(serializer.errors, status=400)
+    
+    @action(detail=True, methods=['post'], url_path='set-portal-password')
+    def set_portal_password(self, request, pk=None):
+        """
+        Set or update portal password for a branch/division.
+        Accessible by: Root Superadmin, Admin, and Branch Managers (for their own branch)
+        """
+        branch = self.get_object()
+        user = request.user
+        new_password = request.data.get('password', '').strip()
+        
+        # Check permissions
+        is_admin = user.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
+        is_branch_manager = user.role == 'BRANCH_MANAGER'
+        
+        # Branch managers can only change their own branch's password
+        if is_branch_manager:
+            # Check if user is assigned to this branch
+            user_branch = None
+            if hasattr(user, 'current_location') and user.current_location:
+                # Try to match by location or project assignments
+                from projects.models import Project
+                user_projects = Project.objects.filter(
+                    Q(project_manager=user) | Q(superintendent=user)
+                ).first()
+                if user_projects and user_projects.branch == branch:
+                    user_branch = branch
+                elif branch.name.lower() in user.current_location.lower():
+                    user_branch = branch
+            
+            if not user_branch or user_branch.id != branch.id:
+                return Response(
+                    {'detail': 'You can only change the portal password for your own branch.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        if not is_admin and not is_branch_manager:
+            return Response(
+                {'detail': 'You do not have permission to set portal passwords.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if not new_password:
+            return Response(
+                {'detail': 'Password is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(new_password) < 4:
+            return Response(
+                {'detail': 'Password must be at least 4 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Store old password for logging
+        old_password_set = bool(branch.portal_password)
+        
+        # Hash and set new password
+        branch.portal_password = make_password(new_password)
+        branch.save()
+        
+        # Log the action
+        action = 'UPDATE'  # Using standard audit action
+        log_action(
+            user=user,
+            action=action,
+            obj=branch,
+            field_name='portal_password',
+            old_value='***' if old_password_set else None,
+            new_value='***',
+            reason=f"Portal password {'set' if not old_password_set else 'changed'} for branch {branch.name} (Division {branch.spectrum_division_code or branch.code})",
+            request=request
+        )
+        
+        # Send email notification
+        try:
+            # Get recipients: admins and branch managers
+            recipients = User.objects.filter(
+                Q(role__in=['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']) |
+                (Q(role='BRANCH_MANAGER') & Q(current_location__icontains=branch.name))
+            ).exclude(email='').values_list('email', flat=True).distinct()
+            
+            if recipients:
+                from django.contrib.sites.models import Site
+                try:
+                    current_site = Site.objects.get_current()
+                    site_domain = current_site.domain
+                except:
+                    site_domain = request.get_host() if hasattr(request, 'get_host') else 'localhost:3000'
+                
+                context = {
+                    'branch': branch,
+                    'changed_by': user.get_full_name() or user.username,
+                    'changed_by_email': user.email,
+                    'action': 'set' if not old_password_set else 'changed',
+                    'division_code': branch.spectrum_division_code or branch.code,
+                    'request': request,
+                }
+                
+                subject = f'Portal Password {"Set" if not old_password_set else "Changed"} - {branch.name}'
+                try:
+                    html_message = render_to_string('accounts/emails/portal_password_changed.html', context)
+                    plain_message = render_to_string('accounts/emails/portal_password_changed.txt', context)
+                except Exception as template_error:
+                    # Fallback if template rendering fails
+                    logger.error(f"Template rendering error: {template_error}")
+                    html_message = None
+                    plain_message = f"Portal password for {branch.name} (Division {branch.spectrum_division_code or branch.code}) has been {context['action']} by {context['changed_by']}."
+                
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=list(recipients),
+                    html_message=html_message,
+                    fail_silently=True,
+                )
+        except Exception as e:
+            # Log email error but don't fail the request
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send portal password change email: {e}")
+        
+        return Response({
+            'detail': f'Portal password {"set" if not old_password_set else "changed"} successfully.',
+            'branch': BranchSerializer(branch).data
+        }, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['get'], url_path='portal-password-status')
+    def portal_password_status(self, request, pk=None):
+        """
+        Get portal password status (whether it's set, without revealing the password).
+        """
+        branch = self.get_object()
+        user = request.user
+        
+        # Check permissions
+        is_admin = user.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
+        is_branch_manager = user.role == 'BRANCH_MANAGER'
+        
+        if not is_admin and not is_branch_manager:
+            return Response(
+                {'detail': 'You do not have permission to view portal password status.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        return Response({
+            'has_password': bool(branch.portal_password),
+            'branch': {
+                'id': branch.id,
+                'name': branch.name,
+                'code': branch.code,
+                'spectrum_division_code': branch.spectrum_division_code,
+            }
+        })
 
 
 class BranchContactViewSet(viewsets.ModelViewSet):

@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 
 
 class User(AbstractUser):
@@ -9,23 +10,10 @@ class User(AbstractUser):
     """
     
     ROLE_CHOICES = [
-        ('PUBLIC_VIEW', 'Public View'),
-        ('LABORER', 'Laborer'),
-        ('MASON', 'Mason'),
-        ('OPERATOR', 'Operator'),
-        ('BRICKLAYER', 'Bricklayer'),
-        ('PLASTER', 'Plaster'),
-        ('FOREMAN', 'Foreman'),
-        ('SUPERINTENDENT', 'Superintendent / Site Supervisor'),
-        ('PROJECT_MANAGER', 'Project Manager'),
-        ('HR', 'HR'),
-        ('FINANCE', 'Finance'),
-        ('AUDITOR', 'Auditor'),
-        ('ADMIN', 'Admin'),
-        ('SYSTEM_ADMIN', 'System Admin'),
-        ('SUPERADMIN', 'Superadmin'),
         ('ROOT_SUPERADMIN', 'Root Superadmin'),
-        ('GENERAL_CONTRACTOR', 'General Contractor'),
+        ('ADMIN', 'Admin'),
+        ('BRANCH_MANAGER', 'Branch Manager'),
+        ('PROJECT_MANAGER', 'Project Manager'),
     ]
     
     SCOPE_CHOICES = [
@@ -48,8 +36,18 @@ class User(AbstractUser):
     )
     
     # Role and scope
-    role = models.CharField(max_length=50, choices=ROLE_CHOICES, default='WORKER')
+    role = models.CharField(max_length=50, choices=ROLE_CHOICES, default='PROJECT_MANAGER')
     scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='PROJECT')
+    
+    # Division assignment (for Branch Managers - they can only see their division's projects)
+    division = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='branch_managers',
+        help_text="Division/Branch assignment (required for Branch Managers)"
+    )
     
     # Invitation tracking
     invited_by = models.ForeignKey(
@@ -106,21 +104,32 @@ class User(AbstractUser):
     
     def can_invite_users(self):
         """Check if user can invite other users."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'HR']
+        return self.role in ['ROOT_SUPERADMIN', 'ADMIN']
     
     def is_root_superadmin(self):
-        """Check if user is root superadmin (cannot be removed)."""
+        """Check if user is root superadmin."""
         return self.role == 'ROOT_SUPERADMIN'
+    
+    def is_admin(self):
+        """Check if user is admin."""
+        return self.role == 'ADMIN'
+    
+    def is_branch_manager(self):
+        """Check if user is branch manager."""
+        return self.role == 'BRANCH_MANAGER'
+    
+    def is_project_manager(self):
+        """Check if user is project manager."""
+        return self.role == 'PROJECT_MANAGER'
     
     def get_invitable_roles(self):
         """Get list of roles this user can invite."""
         if self.role == 'ROOT_SUPERADMIN':
-            # Root superadmin can invite anyone
-            return [choice[0] for choice in self.ROLE_CHOICES]
-        elif self.role in ['SUPERADMIN', 'ADMIN', 'HR']:
-            # These roles can invite lower roles, but not ROOT_SUPERADMIN, SUPERADMIN, or SYSTEM_ADMIN
-            restricted_roles = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'SYSTEM_ADMIN']
-            return [choice[0] for choice in self.ROLE_CHOICES if choice[0] not in restricted_roles]
+            # Root Superadmin can invite Admin, Branch Managers and Project Managers
+            return ['ADMIN', 'BRANCH_MANAGER', 'PROJECT_MANAGER']
+        elif self.role == 'ADMIN':
+            # Admin can invite Branch Managers and Project Managers
+            return ['BRANCH_MANAGER', 'PROJECT_MANAGER']
         else:
             return []
     
@@ -128,64 +137,25 @@ class User(AbstractUser):
         """Check if user can invite a specific role."""
         return role in self.get_invitable_roles()
     
-    # SYSTEM_ADMIN permissions
-    def is_system_admin(self):
-        """Check if user is system admin."""
-        return self.role == 'SYSTEM_ADMIN'
-    
-    def can_manage_integrations(self):
-        """Check if user can manage system integrations."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'SYSTEM_ADMIN']
-    
-    def can_manage_auth_settings(self):
-        """Check if user can manage authentication settings (SSO, MFA)."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'SYSTEM_ADMIN']
-    
-    def can_view_system_monitoring(self):
-        """Check if user can view system monitoring."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'SYSTEM_ADMIN']
-    
-    # ADMIN permissions
-    def is_admin(self):
-        """Check if user is admin."""
-        return self.role == 'ADMIN'
-    
     def can_manage_all_projects(self):
         """Check if user can manage all projects (company-wide visibility)."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
+        return self.role in ['ROOT_SUPERADMIN', 'ADMIN']
     
-    def can_manage_public_portal(self):
-        """Check if user can manage public portal publishing settings."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
+    def can_view_all_divisions(self):
+        """Check if user can view all divisions."""
+        return self.role in ['ROOT_SUPERADMIN', 'ADMIN']
     
-    def can_manage_approval_workflows(self):
-        """Check if user can manage approval workflows."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
-    
-    def can_perform_manual_overrides(self):
-        """Check if user can perform manual overrides."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
-    
-    # AUDITOR permissions (read-only)
-    def is_auditor(self):
-        """Check if user is auditor."""
-        return self.role == 'AUDITOR'
-    
-    def can_view_audit_logs(self):
-        """Check if user can view audit logs."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'AUDITOR']
-    
-    def can_view_approval_history(self):
-        """Check if user can view approval history."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'AUDITOR']
-    
-    def can_view_permission_changes(self):
-        """Check if user can view permission/role changes history."""
-        return self.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'AUDITOR']
-    
-    def is_read_only(self):
-        """Check if user has read-only access (auditor)."""
-        return self.role == 'AUDITOR'
+    def get_accessible_divisions(self):
+        """Get list of divisions this user can access."""
+        if self.role in ['ROOT_SUPERADMIN', 'ADMIN']:
+            # Root Superadmin and Admin can access all divisions
+            from branches.models import Branch
+            return Branch.objects.all()
+        elif self.role == 'BRANCH_MANAGER' and self.division:
+            # Branch Manager can only access their assigned division
+            return [self.division]
+        else:
+            return []
 
 
 class Notification(models.Model):

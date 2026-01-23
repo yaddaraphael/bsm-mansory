@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, generics
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
@@ -10,6 +10,9 @@ from datetime import datetime
 import os
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.contrib.auth import get_user_model
 from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry, SCOPE_OF_WORK_CHOICES
 from .serializers import (
     ProjectSerializer, ProjectScopeSerializer,
@@ -19,57 +22,180 @@ from .serializers import (
 from .utils import generate_job_number
 from .permissions import ProjectViewSetPermission
 from audit.utils import log_action
+from branches.models import Branch
+from django.contrib.auth.hashers import check_password
+
+User = get_user_model()
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
-    queryset = Project.objects.all()
+    queryset = Project.objects.all().exclude(job_number__isnull=True).exclude(job_number='').distinct()
     serializer_class = ProjectSerializer
     permission_classes = [ProjectViewSetPermission]
     filterset_fields = ['status', 'branch', 'is_public']
     search_fields = ['job_number', 'name', 'branch__name']
+    pagination_class = None  # Disable pagination - we do client-side pagination
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def statistics(self, request):
+        """
+        Get project statistics.
+        For branch managers: stats for their division only
+        For admins/superadmins: stats for all projects or filtered by branch
+        """
+        from django.db.models import Count, Q
+        
+        user = request.user
+        branch_id = request.query_params.get('branch', None)
+        
+        # Get base queryset based on user role - exclude invalid projects and use distinct()
+        # Only count Projects that have a corresponding SpectrumJob (imported from Spectrum)
+        # This ensures the count matches the dashboard's "Imported Jobs (Spectrum)" count
+        from spectrum.models import SpectrumJob
+        valid_job_numbers = SpectrumJob.objects.values_list('job_number', flat=True).distinct()
+        base_queryset = Project.objects.exclude(job_number__isnull=True).exclude(job_number='').filter(job_number__in=valid_job_numbers).distinct()
+        
+        if user.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']:
+            queryset = base_queryset
+        elif user.role == 'BRANCH_MANAGER':
+            if user.division:
+                queryset = base_queryset.filter(branch=user.division)
+            else:
+                queryset = Project.objects.none()
+        elif user.role == 'PROJECT_MANAGER':
+            queryset = base_queryset.filter(project_manager=user)
+        else:
+            queryset = Project.objects.none()
+        
+        # Filter by branch if specified
+        if branch_id:
+            try:
+                queryset = queryset.filter(branch_id=branch_id)
+            except ValueError:
+                pass
+        
+        # Calculate statistics - ensure we only count Projects that have valid job_numbers
+        # Since job_number has unique=True constraint, we should use aggregation with Count(distinct=True)
+        # But to match dashboard's SpectrumJob count, we ensure we're counting correctly
+        from django.db.models import Count, Q
+        
+        # Count total distinct job_numbers (should match SpectrumJob count since job_number is unique)
+        # Use aggregation to ensure accurate counting
+        total = queryset.aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        
+        # Count by status using distinct job_numbers
+        active = queryset.filter(status='ACTIVE').aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        inactive = queryset.filter(status='INACTIVE').aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        completed = queryset.filter(status='COMPLETED').aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        closed = queryset.filter(status='CLOSED').aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        
+        # If branch is specified, get branch name
+        branch_name = None
+        if branch_id:
+            try:
+                from branches.models import Branch
+                branch = Branch.objects.get(pk=branch_id)
+                branch_name = branch.name
+            except Branch.DoesNotExist:
+                pass
+        
+        return Response({
+            'total': total,
+            'active': active,
+            'inactive': inactive,
+            'completed': completed,
+            'closed': closed,
+            'branch_id': branch_id,
+            'branch_name': branch_name,
+        })
+    
+    def get_object(self):
+        """
+        Override to support both numeric ID and job_number lookup.
+        Allows URLs like /projects/20-1051 (job_number) or /projects/123 (numeric ID).
+        Handles URL-encoded job numbers like "43048%20MS" -> "43048 MS"
+        """
+        from urllib.parse import unquote
+        from django.http import Http404
+        
+        lookup_url_kwarg = 'id'
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        
+        if not lookup_value:
+            return super().get_object()
+        
+        queryset = self.get_queryset()
+        
+        # Decode URL-encoded values (e.g., "43048%20MS" -> "43048 MS")
+        # Handle both single and double encoding
+        decoded_value = unquote(unquote(str(lookup_value)))
+        
+        # Try to get by job_number first (if it contains non-digit characters like "20-1051" or spaces)
+        # Check if it's not a pure numeric ID
+        is_pure_numeric = decoded_value.isdigit() and '-' not in decoded_value and ' ' not in decoded_value
+        
+        if not is_pure_numeric:
+            # Try exact match with decoded value first
+            try:
+                return queryset.get(job_number=decoded_value)
+            except Project.DoesNotExist:
+                pass
+            
+            # Try with original lookup value (in case it wasn't URL-encoded)
+            try:
+                return queryset.get(job_number=lookup_value)
+            except Project.DoesNotExist:
+                pass
+            
+            # Try case-insensitive lookup
+            try:
+                return queryset.get(job_number__iexact=decoded_value)
+            except (Project.DoesNotExist, Project.MultipleObjectsReturned):
+                pass
+            
+            # Try with trimmed spaces (in case of extra whitespace)
+            try:
+                trimmed_value = decoded_value.strip()
+                if trimmed_value != decoded_value:
+                    return queryset.get(job_number=trimmed_value)
+            except Project.DoesNotExist:
+                pass
+        
+        # Try numeric ID lookup
+        try:
+            if decoded_value.isdigit():
+                return queryset.get(pk=int(decoded_value))
+        except (ValueError, Project.DoesNotExist):
+            pass
+        
+        # If all lookups fail, raise 404
+        raise Http404(f"No Project matches the given query: {lookup_value}")
     
     def get_queryset(self):
-        """Filter projects based on user role and assignments."""
+        """Filter projects based on user role and division assignments."""
         user = self.request.user
         queryset = super().get_queryset()
         
-        # Field workers can only see projects they're assigned to
-        if user.role in ['LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER']:
-            from accounts.models import ProjectAssignment
-            assigned_projects = ProjectAssignment.objects.filter(
-                employee=user,
-                status='ACTIVE'
-            ).values_list('project', flat=True)
-            queryset = queryset.filter(id__in=assigned_projects)
+        # Root Superadmin and Admin can see all projects
+        if user.role in ['ROOT_SUPERADMIN', 'ADMIN']:
+            # No filtering - see all projects
+            pass
         
-        # Foremen can see projects they're assigned to as foreman or through assignments
-        elif user.role == 'FOREMAN':
-            from accounts.models import ProjectAssignment
-            # Projects where they're the foreman
-            foreman_projects = queryset.filter(foreman=user).values_list('id', flat=True)
-            # Projects they're assigned to
-            assigned_projects = ProjectAssignment.objects.filter(
-                employee=user,
-                status='ACTIVE'
-            ).values_list('project', flat=True)
-            # Combine both
-            all_projects = list(foreman_projects) + list(assigned_projects)
-            queryset = queryset.filter(id__in=all_projects)
+        # Branch Managers can only see projects in their division
+        elif user.role == 'BRANCH_MANAGER':
+            if user.division:
+                queryset = queryset.filter(branch=user.division)
+            else:
+                # No division assigned - return empty queryset
+                queryset = queryset.none()
         
         # Project Managers can see their assigned projects
         elif user.role == 'PROJECT_MANAGER':
             queryset = queryset.filter(project_manager=user)
         
-        # Superintendents can see their assigned projects
-        elif user.role == 'SUPERINTENDENT':
-            queryset = queryset.filter(superintendent=user)
-        
-        # General Contractors can see their assigned projects
-        elif user.role == 'GENERAL_CONTRACTOR':
-            queryset = queryset.filter(general_contractor=user)
-        
-        # Admin, Root Superadmin, Superadmin, HR, Finance can see all
-        # (no filtering needed)
+        # Default: no projects (shouldn't happen with new role system)
+        else:
+            queryset = queryset.none()
         
         return queryset
     
@@ -991,4 +1117,223 @@ class PublicProjectDetailView(generics.RetrieveAPIView):
                 raise PermissionDenied('PIN required to access this project.')
         
         return project
+
+
+class BranchPortalProjectListView(generics.ListAPIView):
+    """
+    Public endpoint to view projects for a specific branch/division portal.
+    Requires branch portal password.
+    """
+    serializer_class = PublicProjectSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None  # Disable pagination to return all projects
+    
+    def get_queryset(self):
+        division_code = self.kwargs.get('division_code')
+        password = self.request.query_params.get('password', '')
+        
+        try:
+            # Look up branch by spectrum_division_code (e.g., '111', '121', '115')
+            branch = Branch.objects.get(spectrum_division_code=division_code, status='ACTIVE')
+        except Branch.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound(f'Division {division_code} not found or inactive.')
+        
+        # Check portal password
+        if not branch.portal_password:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Portal access is not enabled for this division.')
+        
+        if not password:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Password is required.')
+        
+        # Verify password (support both plain text and hashed)
+        # Branch passwords are stored hashed, so use check_password
+        password_valid = False
+        stored_password = branch.portal_password
+        
+        # Check if stored password is hashed (starts with hash identifier)
+        if stored_password.startswith('pbkdf2_') or stored_password.startswith('bcrypt') or stored_password.startswith('argon2'):
+            # Password is hashed, use check_password
+            try:
+                password_valid = check_password(password, stored_password)
+            except Exception:
+                password_valid = False
+        else:
+            # Fallback: might be plain text (for backward compatibility)
+            password_valid = (password == stored_password)
+        
+        if not password_valid:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Invalid portal password.')
+        
+        # Return public projects for this branch/division
+        # Filter by both branch and spectrum_division_code to ensure each division only sees their own projects
+        return Project.objects.filter(
+            is_public=True
+        ).filter(
+            Q(branch=branch) | Q(spectrum_division_code=division_code)
+        ).order_by('-updated_at')
+
+
+class HQPortalProjectListView(generics.ListAPIView):
+    """
+    Public endpoint to view ALL projects for HQ portal.
+    Requires HQ portal password.
+    """
+    serializer_class = PublicProjectSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None  # Disable pagination to return all projects
+    
+    def get_queryset(self):
+        password = self.request.query_params.get('password', '').strip()
+        hq_password = getattr(settings, 'HQ_PORTAL_PASSWORD', '').strip()
+        
+        if not hq_password:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('HQ portal access is not enabled.')
+        
+        if not password:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Password is required.')
+        
+        # Verify password (support both plain text and hashed)
+        # First check plain text match (for .env stored passwords)
+        # Then check hashed password (if password was hashed)
+        password_valid = False
+        if password == hq_password:
+            password_valid = True
+        elif hq_password.startswith('pbkdf2_') or hq_password.startswith('bcrypt') or hq_password.startswith('argon2'):
+            # Password appears to be hashed, use check_password
+            try:
+                password_valid = check_password(password, hq_password)
+            except Exception:
+                password_valid = False
+        else:
+            # Try check_password anyway in case it's a different hash format
+            try:
+                password_valid = check_password(password, hq_password)
+            except Exception:
+                password_valid = False
+        
+        if not password_valid:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Invalid HQ portal password.')
+        
+        # Return ALL public projects
+        return Project.objects.filter(is_public=True).order_by('-updated_at')
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def set_hq_portal_password(request):
+    """
+    Set or update HQ portal password.
+    Only accessible to Root Superadmin and Admin.
+    Note: This logs the change. The actual password must be updated in .env file or settings.
+    """
+    user = request.user
+    if user.role not in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']:
+        return Response(
+            {'detail': 'You do not have permission to set HQ portal password.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    new_password = request.data.get('password', '').strip()
+    if not new_password:
+        return Response(
+            {'detail': 'Password is required.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    if len(new_password) < 4:
+        return Response(
+            {'detail': 'Password must be at least 4 characters long.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Get old password status
+    old_password_set = bool(getattr(settings, 'HQ_PORTAL_PASSWORD', ''))
+    
+    # Note: HQ portal password is a setting, not a model object, so we can't use log_action
+    # Instead, we'll log it manually or skip audit logging for settings
+    # For now, we'll create a simple log entry
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(
+        f"HQ Portal Password {'changed' if old_password_set else 'set'} by {user.get_full_name() or user.username} ({user.email})"
+    )
+    
+    # Send email notification
+    try:
+        recipients = User.objects.filter(
+            role__in=['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']
+        ).exclude(email='').values_list('email', flat=True).distinct()
+        
+        if recipients:
+            from django.contrib.sites.models import Site
+            try:
+                current_site = Site.objects.get_current()
+                site_domain = current_site.domain
+            except:
+                site_domain = request.get_host() if hasattr(request, 'get_host') else 'localhost:3000'
+            
+            context = {
+                'changed_by': user.get_full_name() or user.username,
+                'changed_by_email': user.email,
+                'action': 'set' if not old_password_set else 'changed',
+                'request': request,
+            }
+            
+            subject = f'HQ Portal Password {"Set" if not old_password_set else "Changed"}'
+            try:
+                html_message = render_to_string('accounts/emails/hq_portal_password_changed.html', context)
+                plain_message = render_to_string('accounts/emails/hq_portal_password_changed.txt', context)
+            except Exception as template_error:
+                # Fallback if template rendering fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Template rendering error: {template_error}")
+                html_message = None
+                plain_message = f"HQ portal password has been {context['action']} by {context['changed_by']}."
+            
+            send_mail(
+                subject=subject,
+                message=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=list(recipients),
+                html_message=html_message,
+                fail_silently=True,
+            )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to send HQ portal password change email: {e}")
+    
+    return Response({
+        'detail': f'HQ portal password {"set" if not old_password_set else "changed"} successfully. Note: You must update HQ_PORTAL_PASSWORD in your .env file or settings for the change to take effect.',
+        'note': 'This endpoint logs the change. Please update HQ_PORTAL_PASSWORD in your environment configuration.',
+        'password': new_password  # Return password so admin can copy it to .env
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_hq_portal_password_status(request):
+    """
+    Get HQ portal password status.
+    Only accessible to Root Superadmin and Admin.
+    """
+    user = request.user
+    if user.role not in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']:
+        return Response(
+            {'detail': 'You do not have permission to view HQ portal password status.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    hq_password = getattr(settings, 'HQ_PORTAL_PASSWORD', '')
+    return Response({
+        'has_password': bool(hq_password),
+    })
 

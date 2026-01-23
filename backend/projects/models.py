@@ -25,9 +25,36 @@ class Project(models.Model):
     # Basic Information
     name = models.CharField(max_length=200)
     job_number = models.CharField(max_length=50, unique=True, db_index=True)
-    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name='projects')
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name='projects', help_text="Division/Branch (branches are divisions)")
+    spectrum_division_code = models.CharField(
+        max_length=5,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Division code from Spectrum (e.g., '111', '121') - used to match jobs to divisions"
+    )
     client_name = models.CharField(max_length=200, null=True, blank=True, help_text="Client name for this project")
     work_location = models.CharField(max_length=500, null=True, blank=True, help_text="Location where work is performed")
+    spectrum_project_manager = models.CharField(max_length=100, null=True, blank=True, help_text="Project Manager name from Spectrum (fallback if User not matched)")
+    
+    # Spectrum Dates (from SpectrumJobDates)
+    spectrum_est_start_date = models.DateField(null=True, blank=True, help_text="Estimated Start Date from Spectrum")
+    spectrum_est_complete_date = models.DateField(null=True, blank=True, help_text="Estimated Complete Date from Spectrum")
+    spectrum_projected_complete_date = models.DateField(null=True, blank=True, help_text="Projected Complete Date from Spectrum")
+    spectrum_start_date = models.DateField(null=True, blank=True, help_text="Actual Start Date from Spectrum")
+    spectrum_complete_date = models.DateField(null=True, blank=True, help_text="Actual Complete Date from Spectrum")
+    spectrum_create_date = models.DateField(null=True, blank=True, help_text="Job Created Date from Spectrum")
+    
+    # Spectrum Financial (from SpectrumJob)
+    spectrum_original_contract = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text="Original Contract Amount from Spectrum")
+    
+    # Spectrum Phase Aggregates (from SpectrumPhaseEnhanced)
+    spectrum_total_projected_dollars = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text="Total Projected Dollars from all phases")
+    spectrum_total_estimated_dollars = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text="Total Estimated Dollars from all phases")
+    spectrum_total_jtd_dollars = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text="Total Job To Date Dollars from all phases")
+    
+    # Spectrum Cost Types (comma-separated list of unique cost types from phases)
+    spectrum_cost_types = models.TextField(null=True, blank=True, help_text="Comma-separated list of cost types from Spectrum phases")
     
     # Assignments
     general_contractor = models.ForeignKey(
@@ -89,8 +116,10 @@ class Project(models.Model):
         choices=[
             ('PENDING', 'Pending'),
             ('ACTIVE', 'Active'),
+            ('INACTIVE', 'Inactive'),
             ('COMPLETED', 'Completed'),
             ('ON_HOLD', 'On Hold'),
+            ('CLOSED', 'Closed'),
         ],
         default='PENDING'
     )
@@ -198,9 +227,41 @@ class Project(models.Model):
     
     def calculate_forecast_completion_date(self):
         """
-        Calculate forecast completion date based on progress trend.
-        This is a simplified version - can be enhanced with AI.
+        Calculate forecast completion date.
+        First tries to use projected_complete_date from SpectrumJobDates (GetJobDates API).
+        Falls back to calculated forecast based on progress trend if Spectrum data not available.
         """
+        # Try to get projected_complete_date from SpectrumJobDates (GetJobDates API)
+        try:
+            from spectrum.models import SpectrumJobDates
+            # Try to find matching SpectrumJobDates by job_number
+            # Spectrum job numbers might have different formats, so try multiple approaches
+            spectrum_dates = None
+            
+            # Try exact match first
+            try:
+                spectrum_dates = SpectrumJobDates.objects.get(job_number=self.job_number)
+            except SpectrumJobDates.DoesNotExist:
+                # Try case-insensitive match
+                try:
+                    spectrum_dates = SpectrumJobDates.objects.get(job_number__iexact=self.job_number)
+                except (SpectrumJobDates.DoesNotExist, SpectrumJobDates.MultipleObjectsReturned):
+                    # Try with trimmed spaces
+                    try:
+                        trimmed_job_number = self.job_number.strip()
+                        if trimmed_job_number != self.job_number:
+                            spectrum_dates = SpectrumJobDates.objects.get(job_number=trimmed_job_number)
+                    except SpectrumJobDates.DoesNotExist:
+                        pass
+            
+            # If found and has projected_complete_date, use it
+            if spectrum_dates and spectrum_dates.projected_complete_date:
+                return spectrum_dates.projected_complete_date
+        except Exception:
+            # If any error occurs, fall back to calculated forecast
+            pass
+        
+        # Fallback: Calculate forecast completion date based on progress trend
         if self.total_quantity == 0 or self.total_installed == 0:
             return self.estimated_end_date
         

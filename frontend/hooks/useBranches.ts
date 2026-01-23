@@ -12,6 +12,10 @@ export interface Branch {
   status: string;
   created_at: string;
   updated_at: string;
+  total_projects?: number;
+  active_projects?: number;
+  inactive_projects?: number;
+  spectrum_division_code?: string;
 }
 
 export function useBranches(filters?: { status?: string; search?: string }) {

@@ -243,6 +243,9 @@ class ActivateAccountView(APIView):
         user.status = 'ACTIVE'
         user.save()
         
+        # Refresh user from database to ensure all changes are persisted
+        user.refresh_from_db()
+        
         return Response({
             'detail': 'Account activated and email verified successfully. You can now log in.',
             'email': user.email
@@ -319,7 +322,25 @@ class InviteUserView(generics.CreateAPIView):
         user.invited_on = timezone.now()
         user.role_assigned_by = self.request.user
         user.role_assigned_on = timezone.now()
+        
+        # Set division if provided (required for Branch Managers)
+        division = serializer.validated_data.get('division')
+        if user.role == 'BRANCH_MANAGER':
+            if not division:
+                return Response(
+                    {'detail': 'Division is required for Branch Managers.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.division = division
+        else:
+            user.division = division  # Allow setting for other roles too (can be None)
+        
+        # Save user first to ensure all fields are persisted
         user.save()
+        
+        # Refresh user from database to ensure we have the latest state
+        # This is important for token generation which uses password hash and last_login
+        user.refresh_from_db()
         
         # Log permission change
         PermissionChangeLog.objects.create(
@@ -353,6 +374,7 @@ class InviteUserView(generics.CreateAPIView):
         )
         
         # Send activation email (no password - user sets it themselves)
+        # Generate token after user is fully saved and refreshed
         email_error = self.send_activation_email(user)
         
         # Update email status in database
@@ -380,6 +402,10 @@ class InviteUserView(generics.CreateAPIView):
     
     def send_activation_email(self, user):
         """Send invitation email with role-specific template."""
+        # Ensure user is refreshed from database before generating token
+        # Token generation uses password hash and last_login, so we need fresh data
+        user.refresh_from_db()
+        
         role_templates = {
             'WORKER': 'accounts/emails/invite_worker.html',
             'FOREMAN': 'accounts/emails/invite_foreman.html',
@@ -393,12 +419,14 @@ class InviteUserView(generics.CreateAPIView):
             'SUPERADMIN': 'accounts/emails/invite_superadmin.html',
             'ROOT_SUPERADMIN': 'accounts/emails/invite_superadmin.html',  # Use superadmin template
             'GENERAL_CONTRACTOR': 'accounts/emails/invite_gc.html',
+            'BRANCH_MANAGER': 'accounts/emails/invite_admin.html',  # Use admin template for branch managers
         }
         
         template = role_templates.get(user.role, 'accounts/emails/invite_default.html')
         
-        # Generate activation token
+        # Generate activation token - ensure user is fully saved before this
         from django.contrib.auth.tokens import default_token_generator
+        # Generate token after ensuring user is fresh from database
         token = default_token_generator.make_token(user)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         activation_url = f"{settings.FRONTEND_URL or 'http://localhost:3000'}/activate?uid={uid}&token={token}"
@@ -731,14 +759,24 @@ class DashboardStatsView(APIView):
         
         if role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']:
             from projects.models import Project
-            from equipment.models import Equipment
             from django.db.models import Sum, Count, Q
             from branches.models import Branch
+            from spectrum.models import SpectrumJob
             
-            projects = Project.objects.all()
-            active_projects = projects.filter(status='ACTIVE')
-            pending_projects = projects.filter(status='PENDING')
-            completed_projects = projects.filter(status='COMPLETED')
+            # Use distinct() to ensure no duplicates and filter out any invalid projects
+            # Exclude projects with null or empty job_numbers
+            # Only count Projects that have a corresponding SpectrumJob (imported from Spectrum)
+            # This ensures the count matches the dashboard's "Imported Jobs (Spectrum)" count
+            from django.db.models import Count
+            
+            # Get valid job numbers from SpectrumJob (imported jobs)
+            valid_job_numbers = SpectrumJob.objects.values_list('job_number', flat=True).distinct()
+            base_projects = Project.objects.exclude(job_number__isnull=True).exclude(job_number='').filter(job_number__in=valid_job_numbers)
+            projects = base_projects.distinct()
+            active_projects = base_projects.filter(status='ACTIVE')
+            pending_projects = base_projects.filter(status='PENDING')
+            completed_projects = base_projects.filter(status='COMPLETED')
+            inactive_projects = base_projects.filter(status='INACTIVE')
             
             # Calculate revenue statistics
             total_contract_value = projects.aggregate(
@@ -749,21 +787,12 @@ class DashboardStatsView(APIView):
                 total=Sum('contract_balance')
             )['total'] or 0
             
-            # Count projects by status
+            # Count projects by status using Count with distinct=True on job_number
             projects_by_status = {
-                'active': active_projects.count(),
-                'pending': pending_projects.count(),
-                'completed': completed_projects.count(),
-                'on_hold': projects.filter(status='ON_HOLD').count(),
-            }
-            
-            # Count equipment by status
-            equipment = Equipment.objects.all()
-            equipment_by_status = {
-                'in_yard': equipment.filter(status='IN_YARD').count(),
-                'on_site': equipment.filter(status='ON_SITE').count(),
-                'in_transit': equipment.filter(status='IN_TRANSIT').count(),
-                'maintenance': equipment.filter(status='MAINTENANCE').count(),
+                'active': active_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'pending': pending_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'completed': completed_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'on_hold': base_projects.filter(status='ON_HOLD').aggregate(count=Count('job_number', distinct=True))['count'] or 0,
             }
             
             # Count users by status
@@ -773,22 +802,74 @@ class DashboardStatsView(APIView):
             # Count branches
             total_branches = Branch.objects.filter(status='ACTIVE').count()
             
+            # Count Spectrum imported jobs (from imported jobs database)
+            spectrum_jobs = SpectrumJob.objects.all()
+            spectrum_jobs_total = spectrum_jobs.count()
+            spectrum_jobs_active = spectrum_jobs.filter(status_code='A').count()  # Active (A)
+            spectrum_jobs_inactive = spectrum_jobs.filter(status_code='I').count()  # Inactive (I)
+            spectrum_jobs_complete = spectrum_jobs.filter(status_code='C').count()  # Complete (C)
+            
+            # Count distinct job_numbers to ensure accurate counts matching Spectrum imported jobs
+            # Use Count with distinct=True to ensure accurate counting
             stats = {
-                'total_projects': projects.count(),
-                'active_projects': active_projects.count(),
-                'pending_projects': pending_projects.count(),
-                'completed_projects': completed_projects.count(),
-                'projects_on_hold': projects.filter(status='ON_HOLD').count(),
+                'total_projects': base_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'active_projects': active_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'inactive_projects': inactive_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'pending_projects': pending_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'completed_projects': completed_projects.aggregate(count=Count('job_number', distinct=True))['count'] or 0,
+                'projects_on_hold': base_projects.filter(status='ON_HOLD').aggregate(count=Count('job_number', distinct=True))['count'] or 0,
                 'projects_by_status': projects_by_status,
                 'total_users': total_employees,
                 'total_employees': total_employees,
                 'inactive_employees': inactive_employees,
-                'total_equipment': equipment.count(),
-                'equipment_by_status': equipment_by_status,
                 'total_branches': total_branches,
                 'total_contract_value': float(total_contract_value),
                 'total_contract_balance': float(total_contract_balance),
                 'revenue': float(total_contract_value - total_contract_balance),  # Estimated revenue
+                'users_by_role': users_by_role,
+                # Spectrum imported jobs counts
+                'spectrum_jobs_total': spectrum_jobs_total,
+                'spectrum_jobs_active': spectrum_jobs_active,
+                'spectrum_jobs_inactive': spectrum_jobs_inactive,
+                'spectrum_jobs_complete': spectrum_jobs_complete,
+            }
+        elif role == 'BRANCH_MANAGER':
+            from projects.models import Project
+            from django.db.models import Sum, Count, Q
+            
+            # Branch Managers can only see projects in their assigned division
+            if user.division:
+                projects = Project.objects.filter(branch=user.division)
+            else:
+                # No division assigned - return empty stats
+                projects = Project.objects.none()
+            
+            # Calculate project statistics
+            total_projects = projects.count()
+            active_projects = projects.filter(status='ACTIVE').count()
+            inactive_projects = projects.filter(status='PENDING').count()
+            completed_projects = projects.filter(status='COMPLETED').count()
+            
+            # Calculate financial statistics
+            total_contract_value = projects.aggregate(
+                total=Sum('contract_value')
+            )['total'] or 0
+            
+            total_contract_balance = projects.aggregate(
+                total=Sum('contract_balance')
+            )['total'] or 0
+            
+            revenue = float(total_contract_value - total_contract_balance)
+            
+            stats = {
+                'total_projects': total_projects,
+                'active_projects': active_projects,
+                'inactive_projects': inactive_projects,
+                'completed_projects': completed_projects,
+                'total_contract_value': float(total_contract_value),
+                'total_contract_balance': float(total_contract_balance),
+                'revenue': revenue,
+                'division_name': user.division.name if user.division else None,
                 'users_by_role': users_by_role,
             }
         elif role == 'PROJECT_MANAGER':
@@ -859,8 +940,6 @@ class DashboardStatsView(APIView):
         elif role == 'HR':
             from time_tracking.models import PayPeriod
             from projects.models import Project
-            from equipment.models import Equipment
-            
             total_employees = UserModel.objects.filter(status='ACTIVE').count()
             inactive_employees = UserModel.objects.filter(status='INACTIVE').count()
             
@@ -877,7 +956,6 @@ class DashboardStatsView(APIView):
                 'open_pay_periods': PayPeriod.objects.filter(is_locked=False).count() if PayPeriod.objects.exists() else 0,
                 'total_projects': Project.objects.count(),
                 'active_projects': Project.objects.filter(status='ACTIVE').count(),
-                'total_equipment': Equipment.objects.count(),
                 'employees_by_role_count': employees_by_role_count,
                 'users_by_role': users_by_role,
             }

@@ -31,11 +31,17 @@ export function useProjects(filters?: { status?: string; branch?: string; search
         if (branch) params.append('branch', branch);
         if (search) params.append('search', search);
 
-        const response = await api.get(`/projects/projects/?${params.toString()}`, {
+        const queryString = params.toString();
+        const url = `/projects/projects${queryString ? '?' + queryString : ''}`;
+        const response = await api.get(url, {
           signal: abortControllerRef.current?.signal,
         });
         
-        setProjects(response.data.results || response.data || []);
+        // Handle both paginated and non-paginated responses
+        // If results exist, it's paginated; otherwise it's a list
+        const projectsData = response.data.results || response.data || [];
+        setProjects(Array.isArray(projectsData) ? projectsData : []);
+        setError(null);
       } catch (err: any) {
         // Don't set error if request was aborted
         if (err.name !== 'AbortError' && err.name !== 'CanceledError') {
@@ -47,6 +53,7 @@ export function useProjects(filters?: { status?: string; branch?: string; search
       }
     };
 
+    // Always fetch on mount and when filters change
     fetchProjects();
 
     // Cleanup function
@@ -73,7 +80,9 @@ export function useProjects(filters?: { status?: string; branch?: string; search
       const response = await api.get(`/projects/projects/?${params.toString()}`, {
         signal: abortControllerRef.current?.signal,
       });
-      setProjects(response.data.results || response.data || []);
+      // Handle both paginated and non-paginated responses
+      const projectsData = response.data.results || response.data || [];
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
       setError(null);
     } catch (err: any) {
       if (err.name !== 'AbortError' && err.name !== 'CanceledError') {
@@ -101,6 +110,8 @@ export function useProject(id: string | null) {
   const fetchProject = async () => {
     try {
       setLoading(true);
+      // Don't encode here - the API library handles URL encoding automatically
+      // Next.js router also handles encoding, so manual encoding causes double encoding
       const response = await api.get(`/projects/projects/${id}/`);
       setProject(response.data);
       setError(null);

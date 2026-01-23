@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useState, useEffect } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
@@ -14,15 +14,148 @@ import { useAuth } from '@/hooks/useAuth';
 import api from '@/lib/api';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
+interface ComprehensiveProjectData {
+  job: {
+    company_code: string;
+    job_number: string;
+    job_description: string;
+    division: string;
+    address_1: string;
+    address_2: string;
+    city: string;
+    state: string;
+    zip_code: string;
+    project_manager: string;
+    superintendent: string;
+    estimator: string;
+    customer_code: string;
+    customer_name: string;
+    status_code: string;
+    contract_number: string;
+    original_contract: number;
+    phone: string;
+    fax_phone: string;
+    owner_name: string;
+    comment: string;
+    price_method_code: string;
+  };
+  project: {
+    id: number;
+    name: string;
+    status: string;
+    branch: string;
+    contract_value: number;
+    start_date: string;
+    end_date: string;
+  } | null;
+  dates: {
+    est_start_date: string;
+    est_complete_date: string;
+    projected_complete_date: string;
+    create_date: string;
+    start_date: string;
+    complete_date: string;
+  } | null;
+  phases: Array<{
+    phase_code: string;
+    cost_type: string;
+    description: string;
+    status_code: string;
+    jtd_quantity: number;
+    jtd_hours: number;
+    jtd_actual_dollars: number;
+    projected_quantity: number;
+    projected_hours: number;
+    projected_dollars: number;
+    estimated_quantity: number;
+    estimated_hours: number;
+    current_estimated_dollars: number;
+    start_date: string;
+    end_date: string;
+    complete_date: string;
+    comment: string;
+  }>;
+  udf: {
+    udf1: string;
+    udf2: string;
+    udf3: string;
+    udf4: string;
+    udf5: string;
+    udf6: string;
+    udf7: string;
+    udf8: string;
+    udf9: string;
+    udf10: string;
+    udf11: string;
+    udf12: string;
+    udf13: string;
+    udf14: string;
+    udf15: string;
+    udf16: string;
+    udf17: string;
+    udf18: string;
+    udf19: string;
+    udf20: string;
+  } | null;
+  cost_projections: Array<{
+    phase_code: string;
+    cost_type: string;
+    transaction_date: string;
+    amount: number;
+    projected_hours: number;
+    projected_quantity: number;
+    note: string;
+    operator: string;
+  }>;
+  contacts: Array<{
+    contact_id: number;
+    first_name: string;
+    last_name: string;
+    title: string;
+    phone_number: string;
+    email1: string;
+    email2: string;
+    email3: string;
+    addr_1: string;
+    addr_city: string;
+    addr_state: string;
+  }>;
+}
+
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { user } = useAuth();
   const { project, loading } = useProject(id);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [comprehensiveData, setComprehensiveData] = useState<ComprehensiveProjectData | null>(null);
+  const [loadingComprehensive, setLoadingComprehensive] = useState(false);
   
   const canEditDelete = user?.role === 'ROOT_SUPERADMIN';
   const canViewFinancial = !['FOREMAN', 'LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER'].includes(user?.role || '');
+  
+  // Fetch comprehensive Spectrum data
+  useEffect(() => {
+    const fetchComprehensiveData = async () => {
+      if (!project?.job_number) return;
+      
+      setLoadingComprehensive(true);
+      try {
+        const encodedJobNumber = encodeURIComponent(project.job_number);
+        const response = await api.get(`/spectrum/projects/${encodedJobNumber}/comprehensive/`);
+        setComprehensiveData(response.data);
+      } catch (err: any) {
+        // Silently fail if comprehensive data is not available
+        console.log('Comprehensive Spectrum data not available for this project');
+      } finally {
+        setLoadingComprehensive(false);
+      }
+    };
+    
+    if (project) {
+      fetchComprehensiveData();
+    }
+  }, [project]);
 
   if (loading) {
     return (
@@ -134,8 +267,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 <Card title="Project Overview">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
                     <div>
-                      <label className="text-sm font-medium text-gray-500 block mb-1">Branch</label>
+                      <label className="text-sm font-medium text-gray-500 block mb-1">Division</label>
                       <p className="text-base text-gray-900 font-medium">{project.branch_detail?.name || 'N/A'}</p>
+                      {project.spectrum_division_code && (
+                        <p className="text-xs text-gray-400 mt-1">Code: {project.spectrum_division_code}</p>
+                      )}
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-500 block mb-1">Status</label>
@@ -143,6 +279,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         <StatusBadge status={project.status} size="sm" />
                       </p>
                     </div>
+                    {project.client_name && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Client Name</label>
+                        <p className="text-base text-gray-900 font-medium">{project.client_name}</p>
+                      </div>
+                    )}
+                    {project.work_location && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Work Location</label>
+                        <p className="text-base text-gray-900 font-medium">{project.work_location}</p>
+                      </div>
+                    )}
                     <div>
                       <label className="text-sm font-medium text-gray-500 block mb-1">Start Date</label>
                       <p className="text-base text-gray-900 font-medium">
@@ -151,6 +299,17 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           month: 'long',
                           day: 'numeric'
                         })}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-500 block mb-1">Duration</label>
+                      <p className="text-base text-gray-900 font-medium">
+                        {project.duration} {project.duration === 1 ? 'day' : 'days'}
+                        {(project.saturdays || project.full_weekends) && (
+                          <span className="text-xs text-gray-500 ml-2">
+                            ({project.saturdays && 'Saturdays'}{project.saturdays && project.full_weekends && ', '}{project.full_weekends && 'Weekends'} included)
+                          </span>
+                        )}
                       </p>
                     </div>
                     <div>
@@ -165,6 +324,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           : 'N/A'}
                       </p>
                     </div>
+                    {project.qty_sq && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Quantity per Square Foot</label>
+                        <p className="text-base text-gray-900 font-medium">{Number(project.qty_sq).toLocaleString('en-US', { maximumFractionDigits: 2 })}</p>
+                      </div>
+                    )}
                     {project.schedule_status && (
                       <>
                         <div>
@@ -189,6 +354,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     )}
                   </div>
                 </Card>
+
+                {project.notes && (
+                  <Card title="Project Notes">
+                    <div className="prose max-w-none">
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{project.notes}</p>
+                    </div>
+                  </Card>
+                )}
 
                 <Card title="Progress">
                   <div className="space-y-6">
@@ -384,20 +557,292 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         <div className="p-4 bg-green-50 rounded-lg">
                           <label className="text-xs font-medium text-gray-500 block mb-2">Estimated Revenue</label>
                           <p className="text-2xl font-bold text-green-700">
-                            ${(project.contract_value - project.contract_balance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ${(Number(project.contract_value) - Number(project.contract_balance)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
                         </div>
                       )}
                     </div>
                   </Card>
                 )}
+
+                <Card title="Project Information">
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between py-2 border-b border-gray-100">
+                      <span className="text-gray-500">Job Number</span>
+                      <span className="font-medium text-gray-900">{project.job_number}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-gray-100">
+                      <span className="text-gray-500">Created</span>
+                      <span className="font-medium text-gray-900">
+                        {project.created_at
+                          ? new Date(project.created_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })
+                          : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-gray-100">
+                      <span className="text-gray-500">Last Updated</span>
+                      <span className="font-medium text-gray-900">
+                        {project.updated_at
+                          ? new Date(project.updated_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })
+                          : 'N/A'}
+                      </span>
+                    </div>
+                    {project.is_public && (
+                      <div className="flex justify-between py-2">
+                        <span className="text-gray-500">Public Access</span>
+                        <span className="font-medium text-green-600">Enabled</span>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              </div>
               </div>
             </div>
+
+            {/* Comprehensive Spectrum Data Section */}
+            {loadingComprehensive && (
+              <div className="mt-6">
+                <Card title="Loading Spectrum Data">
+                  <div className="flex justify-center py-8">
+                    <LoadingSpinner />
+                  </div>
+                </Card>
               </div>
-            </main>
-          </div>
+            )}
+            {!loadingComprehensive && comprehensiveData && (
+              <div className="mt-6 space-y-6">
+                <Card title="Spectrum Job Information">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {comprehensiveData.job.division && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Division</label>
+                        <p className="text-base text-gray-900">{comprehensiveData.job.division}</p>
+                      </div>
+                    )}
+                    {comprehensiveData.job.customer_name && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Customer</label>
+                        <p className="text-base text-gray-900">{comprehensiveData.job.customer_name}</p>
+                      </div>
+                    )}
+                    {comprehensiveData.job.project_manager && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Project Manager</label>
+                        <p className="text-base text-gray-900">{comprehensiveData.job.project_manager}</p>
+                      </div>
+                    )}
+                    {comprehensiveData.job.superintendent && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Superintendent</label>
+                        <p className="text-base text-gray-900">{comprehensiveData.job.superintendent}</p>
+                      </div>
+                    )}
+                    {comprehensiveData.job.original_contract && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Original Contract</label>
+                        <p className="text-base text-gray-900">${comprehensiveData.job.original_contract.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {comprehensiveData.job.status_code && (
+                      <div>
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Status</label>
+                        <p className="text-base text-gray-900">
+                          {comprehensiveData.job.status_code === 'A' ? 'Active' 
+                           : comprehensiveData.job.status_code === 'I' ? 'Inactive'
+                           : comprehensiveData.job.status_code === 'C' ? 'Complete'
+                           : comprehensiveData.job.status_code}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Job Dates */}
+                {comprehensiveData.dates && (
+                  <Card title="Job Dates">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {comprehensiveData.dates.est_start_date && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500 block mb-1">Est. Start Date</label>
+                          <p className="text-base text-gray-900">{new Date(comprehensiveData.dates.est_start_date).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {comprehensiveData.dates.est_complete_date && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500 block mb-1">Est. Complete Date</label>
+                          <p className="text-base text-gray-900">{new Date(comprehensiveData.dates.est_complete_date).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {comprehensiveData.dates.projected_complete_date && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500 block mb-1">Projected Complete Date</label>
+                          <p className="text-base text-gray-900">{new Date(comprehensiveData.dates.projected_complete_date).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {comprehensiveData.dates.start_date && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500 block mb-1">Actual Start Date</label>
+                          <p className="text-base text-gray-900">{new Date(comprehensiveData.dates.start_date).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                      {comprehensiveData.dates.complete_date && (
+                        <div>
+                          <label className="text-sm font-medium text-gray-500 block mb-1">Actual Complete Date</label>
+                          <p className="text-base text-gray-900">{new Date(comprehensiveData.dates.complete_date).toLocaleDateString()}</p>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Phases */}
+                {comprehensiveData.phases && comprehensiveData.phases.length > 0 && (
+                  <Card title={`Phases (${comprehensiveData.phases.length})`}>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phase Code</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Type</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">JTD Cost</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Cost</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estimated Cost</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {comprehensiveData.phases.map((phase, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm text-gray-900">{phase.phase_code}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{phase.cost_type || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{phase.description || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {phase.jtd_actual_dollars ? `$${phase.jtd_actual_dollars.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {phase.projected_dollars ? `$${phase.projected_dollars.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {phase.current_estimated_dollars ? `$${phase.current_estimated_dollars.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm">
+                                <StatusBadge status={phase.status_code || 'N/A'} size="sm" />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Cost Projections */}
+                {comprehensiveData.cost_projections && comprehensiveData.cost_projections.length > 0 && (
+                  <Card title={`Cost Projections (${comprehensiveData.cost_projections.length})`}>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phase</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Type</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transaction Date</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Hours</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Quantity</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {comprehensiveData.cost_projections.map((proj, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm text-gray-900">{proj.phase_code}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{proj.cost_type}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {proj.transaction_date ? new Date(proj.transaction_date).toLocaleDateString() : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                {proj.amount ? `$${proj.amount.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{proj.projected_hours || '-'}</td>
+                              <td className="px-4 py-3 text-sm text-gray-900">{proj.projected_quantity || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                {/* UDFs */}
+                {comprehensiveData.udf && (
+                  <Card title="User Defined Fields">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => {
+                        const udfValue = comprehensiveData.udf?.[`udf${num}` as keyof typeof comprehensiveData.udf] as string;
+                        if (!udfValue) return null;
+                        return (
+                          <div key={num}>
+                            <label className="text-sm font-medium text-gray-500 block mb-1">UDF{num}</label>
+                            <p className="text-base text-gray-900">{udfValue}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Contacts */}
+                {comprehensiveData.contacts && comprehensiveData.contacts.length > 0 && (
+                  <Card title={`Contacts (${comprehensiveData.contacts.length})`}>
+                    <div className="space-y-4">
+                      {comprehensiveData.contacts.map((contact) => (
+                        <div key={contact.contact_id} className="p-4 border border-gray-200 rounded-lg">
+                          <h4 className="font-semibold text-gray-900 mb-2">
+                            {contact.first_name} {contact.last_name}
+                            {contact.title && <span className="text-sm font-normal text-gray-500 ml-2">- {contact.title}</span>}
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
+                            {contact.phone_number && (
+                              <div>
+                                <span className="font-medium">Phone:</span> {contact.phone_number}
+                              </div>
+                            )}
+                            {contact.email1 && (
+                              <div>
+                                <span className="font-medium">Email:</span> {contact.email1}
+                              </div>
+                            )}
+                            {contact.addr_1 && (
+                              <div>
+                                <span className="font-medium">Address:</span> {contact.addr_1}
+                                {contact.addr_city && `, ${contact.addr_city}`}
+                                {contact.addr_state && ` ${contact.addr_state}`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+              </div>
+            )}
+          </main>
         </div>
-      </ProtectedRoute>
+      </div>
+    </ProtectedRoute>
   );
 }
 

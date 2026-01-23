@@ -28,7 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
             'role_assigned_on', 'is_active', 'is_staff', 'is_superuser',
             'date_joined', 'last_login', 'can_invite_users',
             'invitation_email_sent', 'invitation_email_sent_at', 'invitation_email_error',
-            'email_verified', 'email_verified_at', 'is_activated',
+            'email_verified', 'email_verified_at', 'is_activated', 'division',
         ]
         read_only_fields = ['date_joined', 'last_login', 'is_superuser']
     
@@ -71,9 +71,22 @@ class InviteUserSerializer(serializers.ModelSerializer):
         fields = [
             'username', 'email', 'first_name', 'last_name',
             'employee_number', 'city', 'phone_number', 'status',
-            'role', 'scope', 'password'
+            'role', 'scope', 'division', 'password'
         ]
         extra_kwargs = {'username': {'required': False}}  # Make username optional
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Add division field dynamically with proper queryset
+        from branches.models import Branch
+        from rest_framework import serializers as drf_serializers
+        if 'division' in self.fields:
+            self.fields['division'] = drf_serializers.PrimaryKeyRelatedField(
+                queryset=Branch.objects.filter(status='ACTIVE'),
+                required=False,
+                allow_null=True,
+                help_text="Division/Branch assignment (required for Branch Managers)"
+            )
     
     def generate_employee_number(self):
         """Generate unique employee number from year, month, date."""

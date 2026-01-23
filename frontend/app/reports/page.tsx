@@ -90,9 +90,10 @@ export default function ReportsPage() {
       const statsResponse = await api.get('/auth/dashboard/stats/');
       setStats(statsResponse.data);
 
-      // Fetch recent projects
-      const projectsResponse = await api.get('/projects/projects/?limit=10');
-      setProjects(projectsResponse.data.results || projectsResponse.data || []);
+      // Fetch recent projects (pagination is disabled, so we get all and slice on client)
+      const projectsResponse = await api.get('/projects/projects/');
+      const allProjects = projectsResponse.data.results || projectsResponse.data || [];
+      setProjects(allProjects.slice(0, 10)); // Get first 10 on client side
 
       // Fetch recent time entries
       const timeResponse = await api.get('/time/entries/?limit=20');

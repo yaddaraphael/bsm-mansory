@@ -9,9 +9,11 @@ django-filter==23.5
 celery==5.3.4
 redis==5.0.1
 reportlab==4.0.7
+openpyxl==3.1.2
 requests==2.31.0
 msal==1.28.0
 google-auth==2.29.0
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
+zeep==4.2.1
 

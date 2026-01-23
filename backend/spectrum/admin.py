@@ -1,26 +1,29 @@
 from django.contrib import admin
-from .models import SpectrumEmployee, SpectrumProject, SpectrumReport
+from .models import SpectrumJob
 
 
-@admin.register(SpectrumEmployee)
-class SpectrumEmployeeAdmin(admin.ModelAdmin):
-    list_display = ['spectrum_id', 'employee_id', 'first_name', 'last_name', 'email', 'role', 'status', 'last_synced_at']
-    list_filter = ['status', 'role', 'last_synced_at']
-    search_fields = ['spectrum_id', 'employee_id', 'first_name', 'last_name', 'email']
+@admin.register(SpectrumJob)
+class SpectrumJobAdmin(admin.ModelAdmin):
+    list_display = ['job_number', 'job_description', 'company_code', 'status_code', 
+                    'project_manager', 'superintendent', 'last_synced_at']
+    list_filter = ['status_code', 'company_code', 'division', 'project_manager']
+    search_fields = ['job_number', 'job_description', 'customer_code', 'contract_number']
     readonly_fields = ['created_at', 'updated_at', 'last_synced_at']
-
-
-@admin.register(SpectrumProject)
-class SpectrumProjectAdmin(admin.ModelAdmin):
-    list_display = ['spectrum_id', 'project_id', 'job_number', 'name', 'client', 'status', 'last_synced_at']
-    list_filter = ['status', 'last_synced_at']
-    search_fields = ['spectrum_id', 'project_id', 'job_number', 'name', 'client']
-    readonly_fields = ['created_at', 'updated_at', 'last_synced_at']
-
-
-@admin.register(SpectrumReport)
-class SpectrumReportAdmin(admin.ModelAdmin):
-    list_display = ['spectrum_id', 'report_id', 'title', 'report_type', 'project', 'status', 'created_date', 'last_synced_at']
-    list_filter = ['report_type', 'status', 'last_synced_at']
-    search_fields = ['spectrum_id', 'report_id', 'title', 'project']
-    readonly_fields = ['created_at', 'updated_at', 'last_synced_at']
+    
+    fieldsets = (
+        ('Job Information', {
+            'fields': ('company_code', 'job_number', 'job_description', 'division', 'status_code')
+        }),
+        ('Location', {
+            'fields': ('address_1', 'address_2', 'city', 'state', 'zip_code')
+        }),
+        ('Team', {
+            'fields': ('project_manager', 'superintendent', 'estimator')
+        }),
+        ('Customer & Contract', {
+            'fields': ('customer_code', 'contract_number', 'cost_center', 'work_state_tax_code', 'certified_flag')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at', 'last_synced_at')
+        }),
+    )

@@ -11,6 +11,12 @@ export function middleware(request: NextRequest) {
     return request.nextUrl.pathname.startsWith(route);
   });
   
+  // Allow branch portal and HQ portal routes
+  if (request.nextUrl.pathname.startsWith('/public/branch/') || 
+      request.nextUrl.pathname.startsWith('/public/hq')) {
+    return NextResponse.next();
+  }
+  
   // Allow public routes
   if (isPublicRoute) {
     return NextResponse.next();

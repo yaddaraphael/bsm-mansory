@@ -5,14 +5,22 @@ from accounts.models import User
 
 class Branch(models.Model):
     """
-    Branch/Location model - represents a mapped operating area.
+    Branch/Division model - represents a division (branches are divisions).
+    Each division has a code that matches Spectrum division codes.
     """
     name = models.CharField(max_length=200)
     code = models.CharField(
         max_length=10,
         unique=True,
         validators=[MinLengthValidator(2)],
-        help_text="Short code for job numbering (e.g., KC)"
+        help_text="Division code (e.g., 111, 121, 131, 135, 145) - matches Spectrum division codes"
+    )
+    spectrum_division_code = models.CharField(
+        max_length=5,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Spectrum division code (e.g., '111', '121') - used to match jobs from Spectrum"
     )
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
@@ -22,6 +30,13 @@ class Branch(models.Model):
         max_length=20,
         choices=[('ACTIVE', 'Active'), ('INACTIVE', 'Inactive')],
         default='ACTIVE'
+    )
+    # Public portal password for branch-specific portal
+    portal_password = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Password for accessing this branch's public portal. Leave blank to disable portal access."
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -34,6 +34,15 @@ export default function BranchesPage() {
     status: statusFilter,
   });
 
+  // Auto-refresh branches every 30 seconds to catch sync updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refetch();
+    }, 30000); // Refresh every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [refetch]);
+
   const handleDeactivate = async (branchId: number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Are you sure you want to deactivate this branch?')) return;
@@ -144,16 +153,12 @@ export default function BranchesPage() {
           <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
             <div className="max-w-7xl mx-auto">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                <h1 className="text-xl md:text-2xl font-bold text-gray-900">Branches & Locations</h1>
-                {canCreateBranch && (
-                  <Button
-                    onClick={() => router.push('/branches/new')}
-                    className="w-full sm:w-auto flex items-center"
-                  >
-                    <PlusIcon className="h-5 w-5 mr-2" />
-                    <span>Add Branch</span>
-                  </Button>
-                )}
+                <div>
+                  <h1 className="text-xl md:text-2xl font-bold text-gray-900">Divisions</h1>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Divisions are automatically created from Spectrum imports. Sync jobs from Spectrum to update divisions.
+                  </p>
+                </div>
               </div>
 
             {error && (
@@ -170,7 +175,7 @@ export default function BranchesPage() {
                   <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <Input
                     type="text"
-                    placeholder="Search branches..."
+                    placeholder="Search divisions..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="pl-10"
@@ -211,6 +216,23 @@ export default function BranchesPage() {
                       <StatusBadge status={branch.status} size="sm" />
                     </div>
                     <div className="space-y-2 text-sm">
+                      {/* Project Counts */}
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-gray-600 font-medium">Total Projects:</span>
+                          <span className="text-gray-900 font-bold">{branch.total_projects || 0}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-green-600">Active (A):</span>
+                            <span className="text-gray-900 font-semibold">{branch.active_projects || 0}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600">Inactive (I):</span>
+                            <span className="text-gray-900 font-semibold">{branch.inactive_projects || 0}</span>
+                          </div>
+                        </div>
+                      </div>
                       {branch.address && (
                         <div>
                           <span className="text-gray-500">Address:</span>
@@ -314,15 +336,10 @@ export default function BranchesPage() {
               <Card>
                 <div className="text-center py-8">
                   <MapPinIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500">No branches found</p>
-                  {canCreateBranch && (
-                    <Button
-                      onClick={() => router.push('/branches/new')}
-                      className="mt-4"
-                    >
-                      Add First Branch
-                    </Button>
-                  )}
+                  <p className="text-gray-500">No divisions found</p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    Divisions are automatically created when you sync jobs from Spectrum.
+                  </p>
                 </div>
               </Card>
             )}

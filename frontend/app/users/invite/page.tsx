@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
@@ -16,45 +16,20 @@ import Link from 'next/link';
 const getAllowedRoles = (userRole: string | undefined): string[] => {
   if (!userRole) return [];
   
-  // Root superadmin can invite anyone
+  // Root superadmin can invite ADMIN, BRANCH_MANAGER, and PROJECT_MANAGER
   if (userRole === 'ROOT_SUPERADMIN') {
     return [
-      'LABORER',
-      'MASON',
-      'OPERATOR',
-      'BRICKLAYER',
-      'PLASTER',
-      'FOREMAN',
-      'SUPERINTENDENT',
-      'PROJECT_MANAGER',
-      'GENERAL_CONTRACTOR',
-      'HR',
-      'FINANCE',
-      'AUDITOR',
       'ADMIN',
-      'SYSTEM_ADMIN',
-      'SUPERADMIN',
-      'ROOT_SUPERADMIN',
+      'BRANCH_MANAGER',
+      'PROJECT_MANAGER',
     ];
   }
   
-  // Other roles (SUPERADMIN, ADMIN, HR) can invite lower roles
-  // They cannot invite ROOT_SUPERADMIN, SUPERADMIN, or SYSTEM_ADMIN
-  if (['SUPERADMIN', 'ADMIN', 'HR'].includes(userRole)) {
+  // Admin can invite BRANCH_MANAGER and PROJECT_MANAGER
+  if (userRole === 'ADMIN') {
     return [
-      'LABORER',
-      'MASON',
-      'OPERATOR',
-      'BRICKLAYER',
-      'PLASTER',
-      'FOREMAN',
-      'SUPERINTENDENT',
+      'BRANCH_MANAGER',
       'PROJECT_MANAGER',
-      'GENERAL_CONTRACTOR',
-      'HR',
-      'FINANCE',
-      'AUDITOR',
-      'ADMIN',
     ];
   }
   
@@ -62,22 +37,9 @@ const getAllowedRoles = (userRole: string | undefined): string[] => {
 };
 
 const roleLabels: Record<string, string> = {
-  'LABORER': 'Laborer',
-  'MASON': 'Mason',
-  'OPERATOR': 'Operator',
-  'BRICKLAYER': 'Bricklayer',
-  'PLASTER': 'Plaster',
-  'FOREMAN': 'Foreman',
-  'SUPERINTENDENT': 'Superintendent',
-  'PROJECT_MANAGER': 'Project Manager',
-  'GENERAL_CONTRACTOR': 'General Contractor',
-  'HR': 'HR',
-  'FINANCE': 'Finance',
-  'AUDITOR': 'Auditor',
   'ADMIN': 'Admin',
-  'SYSTEM_ADMIN': 'System Admin',
-  'SUPERADMIN': 'Superadmin',
-  'ROOT_SUPERADMIN': 'Root Superadmin',
+  'BRANCH_MANAGER': 'Branch Manager',
+  'PROJECT_MANAGER': 'Project Manager',
 };
 
 export default function InviteUserPage() {
@@ -92,11 +54,26 @@ export default function InviteUserPage() {
     last_name: '',
     phone_number: '',
     city: '',
-    role: allowedRoles[0] || 'LABORER',
+    role: allowedRoles[0] || 'PROJECT_MANAGER',
+    division: '', // For Branch Managers
   });
   
+  const [branches, setBranches] = useState<Array<{ id: number; name: string; code: string }>>([]);
   const [generatedEmployeeNumber, setGeneratedEmployeeNumber] = useState<string>('');
   const [invitedEmail, setInvitedEmail] = useState<string>('');
+  
+  // Fetch branches for division selection
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        const response = await api.get('/branches/?status=ACTIVE');
+        setBranches(response.data.results || response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch branches:', error);
+      }
+    };
+    fetchBranches();
+  }, []);
 
   const [success, setSuccess] = useState(false);
 
@@ -107,7 +84,36 @@ export default function InviteUserPage() {
     setSuccess(false);
 
     try {
-      const response = await api.post('/auth/invite/', formData);
+      // Validate division for Branch Managers
+      if (formData.role === 'BRANCH_MANAGER' && !formData.division) {
+        setError('Division is required for Branch Managers');
+        setLoading(false);
+        return;
+      }
+      
+      // Prepare data for API - include division ID if Branch Manager
+      const inviteData: {
+        email: string;
+        first_name: string;
+        last_name: string;
+        phone_number: string;
+        city: string;
+        role: string;
+        division?: number;
+      } = {
+        email: formData.email,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        phone_number: formData.phone_number,
+        city: formData.city,
+        role: formData.role,
+      };
+      
+      if (formData.division) {
+        inviteData.division = parseInt(formData.division, 10);
+      }
+      
+      const response = await api.post('/auth/invite/', inviteData);
       setGeneratedEmployeeNumber(response.data?.employee_number || '');
       setInvitedEmail(formData.email);
       
@@ -126,7 +132,8 @@ export default function InviteUserPage() {
           last_name: '',
           phone_number: '',
           city: '',
-          role: 'LABORER',
+          role: allowedRoles[0] || 'PROJECT_MANAGER',
+          division: '',
         });
         // Don't auto-redirect, let user see the message
       } else {
@@ -139,7 +146,8 @@ export default function InviteUserPage() {
           last_name: '',
           phone_number: '',
           city: '',
-          role: 'LABORER',
+          role: allowedRoles[0] || 'PROJECT_MANAGER',
+          division: '',
         });
         // Redirect after 3 seconds if email was sent successfully
         setTimeout(() => {
@@ -155,8 +163,6 @@ export default function InviteUserPage() {
   };
 
   const canInvite = currentUser?.role === 'ADMIN' || 
-                    currentUser?.role === 'HR' || 
-                    currentUser?.role === 'SUPERADMIN' || 
                     currentUser?.role === 'ROOT_SUPERADMIN';
 
   if (!canInvite) {
@@ -180,7 +186,7 @@ export default function InviteUserPage() {
   }
 
   return (
-    <ProtectedRoute allowedRoles={['ADMIN', 'HR', 'SUPERADMIN', 'ROOT_SUPERADMIN']}>
+    <ProtectedRoute allowedRoles={['ADMIN', 'ROOT_SUPERADMIN']}>
       <div className="flex min-h-screen">
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0 sidebar-content">
@@ -247,7 +253,7 @@ export default function InviteUserPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
                     <select
                       value={formData.role}
-                      onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                      onChange={(e) => setFormData({ ...formData, role: e.target.value, division: '' })}
                       className="input-field"
                       required
                     >
@@ -267,6 +273,31 @@ export default function InviteUserPage() {
                       </p>
                     )}
                   </div>
+
+                  {/* Division field - only show for Branch Managers */}
+                  {formData.role === 'BRANCH_MANAGER' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Division <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={formData.division}
+                        onChange={(e) => setFormData({ ...formData, division: e.target.value })}
+                        className="input-field"
+                        required
+                      >
+                        <option value="">Select a division</option>
+                        {branches.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name} ({branch.code})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-sm text-gray-500 mt-1">
+                        Branch Managers can only see projects in their assigned division.
+                      </p>
+                    </div>
+                  )}
 
 
 

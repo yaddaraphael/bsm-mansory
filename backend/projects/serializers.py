@@ -28,18 +28,86 @@ class ProjectSerializer(serializers.ModelSerializer):
     superintendent_detail = UserSerializer(source='superintendent', read_only=True)
     foreman_detail = UserSerializer(source='foreman', read_only=True)
     general_contractor_detail = UserSerializer(source='general_contractor', read_only=True)
+    spectrum_status_code = serializers.SerializerMethodField()
+    projected_complete_date = serializers.SerializerMethodField()
+    actual_complete_date = serializers.SerializerMethodField()
+    job_description = serializers.SerializerMethodField()
+    spectrum_project_manager_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
         fields = '__all__'
         read_only_fields = ['created_at', 'updated_at', 'job_number']
     
+    def get_spectrum_status_code(self, obj):
+        """Get the current status code from Spectrum for this job."""
+        try:
+            from spectrum.models import SpectrumJob
+            spectrum_job = SpectrumJob.objects.get(job_number=obj.job_number)
+            return spectrum_job.status_code
+        except SpectrumJob.DoesNotExist:
+            return None
+    
+    def get_job_description(self, obj):
+        """Get job description from SpectrumJob."""
+        try:
+            from spectrum.models import SpectrumJob
+            spectrum_job = SpectrumJob.objects.filter(job_number=obj.job_number).first()
+            if spectrum_job and spectrum_job.job_description:
+                return spectrum_job.job_description
+            return None
+        except Exception:
+            return None
+    
+    def get_spectrum_project_manager_name(self, obj):
+        """Get project manager name from Spectrum (fallback if User not matched)."""
+        # Return the stored Spectrum PM name if available
+        if obj.spectrum_project_manager:
+            return obj.spectrum_project_manager
+        # Otherwise try to get it from SpectrumJob
+        try:
+            from spectrum.models import SpectrumJob
+            spectrum_job = SpectrumJob.objects.filter(job_number=obj.job_number).first()
+            if spectrum_job and spectrum_job.project_manager:
+                return spectrum_job.project_manager
+        except Exception:
+            pass
+        return None
+    
+    def get_projected_complete_date(self, obj):
+        """Get projected complete date from Project model (saved from Spectrum)."""
+        # First try the Project model field (faster, already saved)
+        if obj.spectrum_projected_complete_date:
+            return obj.spectrum_projected_complete_date
+        # Fallback to SpectrumJobDates if not saved yet
+        try:
+            from spectrum.models import SpectrumJobDates
+            spectrum_dates = SpectrumJobDates.objects.filter(job_number=obj.job_number).first()
+            if spectrum_dates and spectrum_dates.projected_complete_date:
+                return spectrum_dates.projected_complete_date
+        except Exception:
+            pass
+        return None
+    
+    def get_actual_complete_date(self, obj):
+        """Get actual complete date from Project model (saved from Spectrum)."""
+        # First try the Project model field (faster, already saved)
+        if obj.spectrum_complete_date:
+            return obj.spectrum_complete_date
+        # Fallback to SpectrumJobDates if not saved yet
+        try:
+            from spectrum.models import SpectrumJobDates
+            spectrum_dates = SpectrumJobDates.objects.filter(job_number=obj.job_number).first()
+            if spectrum_dates and spectrum_dates.complete_date:
+                return spectrum_dates.complete_date
+        except Exception:
+            pass
+        return None
     
     def get_schedule_status(self, obj):
         status, forecast_date, days_late = obj.get_schedule_status()
         return {
             'status': status,
-            'forecast_date': forecast_date,
             'days_late': days_late
         }
 
@@ -118,6 +186,8 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     """
     branch_name = serializers.SerializerMethodField()
     branch_code = serializers.SerializerMethodField()
+    job_description = serializers.SerializerMethodField()
+    spectrum_status_code = serializers.SerializerMethodField()
     scopes = ProjectScopeSerializer(many=True, read_only=True)
     estimated_end_date = serializers.SerializerMethodField()
     total_quantity = serializers.SerializerMethodField()
@@ -130,7 +200,7 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = [
-            'id', 'name', 'job_number', 'branch_name', 'branch_code',
+            'id', 'name', 'job_number', 'job_description', 'spectrum_status_code', 'branch_name', 'branch_code',
             'start_date', 'estimated_end_date', 'duration',
             'status', 'is_public', 'public_pin',
             # Financial fields removed for public view
@@ -150,6 +220,28 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     def get_branch_code(self, obj):
         try:
             return obj.branch.code if obj.branch else None
+        except Exception:
+            return None
+    
+    def get_job_description(self, obj):
+        """Get job_description from SpectrumJob if available."""
+        try:
+            from spectrum.models import SpectrumJob
+            spectrum_job = SpectrumJob.objects.filter(job_number=obj.job_number).first()
+            if spectrum_job and spectrum_job.job_description:
+                return spectrum_job.job_description
+            return None
+        except Exception:
+            return None
+    
+    def get_spectrum_status_code(self, obj):
+        """Get the current status code from Spectrum for this job."""
+        try:
+            from spectrum.models import SpectrumJob
+            spectrum_job = SpectrumJob.objects.filter(job_number=obj.job_number).first()
+            if spectrum_job:
+                return spectrum_job.status_code
+            return None
         except Exception:
             return None
     
@@ -205,14 +297,12 @@ class PublicProjectSerializer(serializers.ModelSerializer):
                 status, forecast_date, days_late = obj.get_schedule_status()
                 return {
                     'status': status or 'GREEN',
-                    'forecast_date': forecast_date.isoformat() if forecast_date and hasattr(forecast_date, 'isoformat') else None,
                     'days_late': int(days_late) if days_late else 0
                 }
             else:
                 # Fallback if method doesn't exist
                 return {
                     'status': 'GREEN',
-                    'forecast_date': None,
                     'days_late': 0
                 }
         except Exception as e:
@@ -222,7 +312,6 @@ class PublicProjectSerializer(serializers.ModelSerializer):
             logger.error(f'Error getting schedule status for project {obj.id}: {str(e)}', exc_info=True)
             return {
                 'status': 'GREEN',
-                'forecast_date': None,
                 'days_late': 0
             }
 
