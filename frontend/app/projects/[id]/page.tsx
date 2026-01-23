@@ -144,7 +144,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         const encodedJobNumber = encodeURIComponent(project.job_number);
         const response = await api.get(`/spectrum/projects/${encodedJobNumber}/comprehensive/`);
         setComprehensiveData(response.data);
-      } catch (err: any) {
+      } catch {
         // Silently fail if comprehensive data is not available
         console.log('Comprehensive Spectrum data not available for this project');
       } finally {

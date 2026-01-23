@@ -73,9 +73,9 @@ export default function ProjectsPage() {
         try {
           const branchesRes = await api.get('/branches/?status=ACTIVE');
           setBranches(branchesRes.data.results || branchesRes.data || []);
-        } catch (branchError: any) {
+        } catch (branchError) {
           // If 401, user might not be authenticated yet - will retry when auth is ready
-          if (branchError.response?.status !== 401) {
+          if ((branchError as { response?: { status?: number } })?.response?.status !== 401) {
             console.error('Failed to fetch branches:', branchError);
           }
         }
@@ -84,9 +84,9 @@ export default function ProjectsPage() {
         try {
           const pmRes = await api.get('/auth/users/?role=PROJECT_MANAGER');
           setProjectManagers(pmRes.data.results || pmRes.data || []);
-        } catch (pmError: any) {
+        } catch (pmError) {
           // If 401, user might not be authenticated yet - will retry when auth is ready
-          if (pmError.response?.status !== 401) {
+          if ((pmError as { response?: { status?: number } })?.response?.status !== 401) {
             console.error('Failed to fetch project managers:', pmError);
           }
         }

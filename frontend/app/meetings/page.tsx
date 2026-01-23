@@ -106,6 +106,9 @@ export default function MeetingsPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [meetingToDelete, setMeetingToDelete] = useState<Meeting | null>(null);
   const [activeJobs, setActiveJobs] = useState<Project[]>([]);
+  const [meetingJobs, setMeetingJobs] = useState<MeetingJob[]>([]);
+  const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
   
   // New meeting form state
   const [newMeetingDate, setNewMeetingDate] = useState('');
@@ -121,6 +124,8 @@ export default function MeetingsPage() {
   const [filterBranch, setFilterBranch] = useState<number | null>(null);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchMeetings();
@@ -133,8 +138,9 @@ export default function MeetingsPage() {
       const response = await api.get('/meetings/meetings/');
       setMeetings(response.data.results || response.data || []);
       setError(null);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load meetings');
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error.response?.data?.detail || 'Failed to load meetings');
       console.error('Error fetching meetings:', err);
     } finally {
       setLoading(false);
@@ -164,13 +170,24 @@ export default function MeetingsPage() {
         notes: '',
       }));
       setMeetingJobs(initialJobs);
-    } catch (err: any) {
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
       console.error('Error fetching active jobs:', err);
-      setError(err.response?.data?.detail || 'Failed to load active jobs');
+      setError(error.response?.data?.detail || 'Failed to load active jobs');
     }
   };
 
-  const [saving, setSaving] = useState(false);
+  const handleOpenReview = (meeting: Meeting) => {
+    router.push(`/meetings/${meeting.id}/review`);
+  };
+
+  const handleSaveMeetingJobs = async () => {
+    // This function is for the old modal - now we use the review page
+    // Keeping it for compatibility but it should navigate instead
+    if (selectedMeeting) {
+      router.push(`/meetings/${selectedMeeting.id}/review`);
+    }
+  };
 
   const handleCreateMeeting = async () => {
     if (!newMeetingDate) {
@@ -194,8 +211,9 @@ export default function MeetingsPage() {
       setNewMeetingBranch(null);
       setNewMeetingNotes('');
       setShowCreateModal(false);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to create meeting');
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error.response?.data?.detail || 'Failed to create meeting');
       console.error('Error creating meeting:', err);
     } finally {
       setSaving(false);
@@ -221,8 +239,9 @@ export default function MeetingsPage() {
       } else {
         setError('Failed to export PDF: Invalid response');
       }
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to export PDF';
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } }; message?: string };
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to export PDF';
       setError(errorMessage);
       console.error('Error exporting PDF:', err);
     }
@@ -241,7 +260,7 @@ export default function MeetingsPage() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (err: any) {
+    } catch (err) {
       setError('Failed to export Excel');
       console.error('Error exporting Excel:', err);
     }
@@ -256,8 +275,9 @@ export default function MeetingsPage() {
       setError(null);
       setShowDeleteModal(false);
       setMeetingToDelete(null);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to delete meeting');
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error.response?.data?.detail || 'Failed to delete meeting');
       console.error('Error deleting meeting:', err);
     }
   };
@@ -470,7 +490,6 @@ export default function MeetingsPage() {
                             <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                               <Button
                                 variant="outline"
-                                size="sm"
                                 onClick={() => handleOpenReview(meeting)}
                                 className="text-xs px-2 py-1 sm:px-3 sm:py-1.5"
                               >
@@ -479,7 +498,6 @@ export default function MeetingsPage() {
                               </Button>
                               <Button
                                 variant="outline"
-                                size="sm"
                                 onClick={() => handleExportPDF(meeting.id)}
                                 className="text-xs px-2 py-1 sm:px-3 sm:py-1.5"
                                 title="Export PDF"
@@ -489,7 +507,6 @@ export default function MeetingsPage() {
                               </Button>
                               <Button
                                 variant="outline"
-                                size="sm"
                                 onClick={() => handleExportExcel(meeting.id)}
                                 className="text-xs px-2 py-1 sm:px-3 sm:py-1.5"
                                 title="Export Excel"
@@ -500,7 +517,6 @@ export default function MeetingsPage() {
                               {(user?.role === 'ROOT_SUPERADMIN' || user?.role === 'SUPERADMIN' || user?.role === 'ADMIN') && (
                                 <Button
                                   variant="outline"
-                                  size="sm"
                                   onClick={() => openDeleteModal(meeting)}
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50 text-xs px-2 py-1 sm:px-3 sm:py-1.5"
                                   title="Delete Meeting"
@@ -527,7 +543,6 @@ export default function MeetingsPage() {
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                       disabled={currentPage === 1}
                       className="text-xs px-2 py-1 sm:px-3 sm:py-1.5"
@@ -549,8 +564,7 @@ export default function MeetingsPage() {
                         return (
                           <Button
                             key={pageNum}
-                            variant={currentPage === pageNum ? "default" : "outline"}
-                            size="sm"
+                            variant={currentPage === pageNum ? "primary" : "outline"}
                             onClick={() => setCurrentPage(pageNum)}
                             className="text-xs px-2 py-1 sm:px-3 sm:py-1.5 min-w-[2rem]"
                           >
@@ -561,7 +575,6 @@ export default function MeetingsPage() {
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                       disabled={currentPage === totalPages}
                       className="text-xs px-2 py-1 sm:px-3 sm:py-1.5"
@@ -642,17 +655,16 @@ export default function MeetingsPage() {
           </div>
         )}
 
-        {/* Old modal removed - now using full page */}
+        {/* Old modal removed - now using full page - code removed to fix TypeScript errors */}
         {false && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
             <Card className="w-full max-w-6xl max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold">
-                  Review Meeting - {new Date(selectedMeeting.meeting_date).toLocaleDateString()}
+                  Review Meeting - {selectedMeeting?.meeting_date ? new Date((selectedMeeting as Meeting).meeting_date).toLocaleDateString() : ''}
                 </h2>
                 <Button
                   variant="outline"
-                  size="sm"
                   onClick={() => {
                     setShowReviewModal(false);
                     setSelectedMeeting(null);
@@ -670,10 +682,10 @@ export default function MeetingsPage() {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {meetingJobs.map((job, index) => {
+                    {meetingJobs.map((job: MeetingJob, index: number) => {
                       const project = job.project;
                       const scopes = project?.scopes || [];
-                      const scopeTypes = scopes.map((s: any) => s.scope_type).join(', ') || 'N/A';
+                      const scopeTypes = scopes.map((s: { scope_type?: string }) => s.scope_type).filter(Boolean).join(', ') || 'N/A';
                       
                       return (
                         <Card key={job.project_id} className="p-6">
@@ -777,7 +789,7 @@ export default function MeetingsPage() {
                             <h5 className="text-sm font-semibold text-gray-900 mb-3">Phases</h5>
                             {job.phases && job.phases.length > 0 ? (
                               <div className="space-y-3">
-                                {job.phases.map((phase, phaseIndex) => {
+                                {job.phases.map((phase: Phase, phaseIndex: number) => {
                                   const percentComplete = phase.quantity > 0 
                                     ? ((phase.installed_quantity / phase.quantity) * 100).toFixed(1)
                                     : '0.0';
@@ -867,7 +879,7 @@ export default function MeetingsPage() {
                                             onChange={(e) => {
                                               const updated = [...meetingJobs];
                                               if (!updated[index].phases) updated[index].phases = [];
-                                              updated[index].phases[phaseIndex].duration = parseInt(e.target.value) || null;
+                                              updated[index].phases[phaseIndex].duration = parseInt(e.target.value) || undefined;
                                               setMeetingJobs(updated);
                                             }}
                                             className="text-sm"

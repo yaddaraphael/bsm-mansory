@@ -317,13 +317,21 @@ export default function SpectrumPage() {
   // Modal state for job details - using comprehensive data
   const [selectedJob, setSelectedJob] = useState<{company_code: string; job_number: string} | null>(null);
   const [comprehensiveJobDetails, setComprehensiveJobDetails] = useState<{
-    job: any;
-    project: any;
-    dates: any;
-    phases: any[];
-    udf: any;
-    cost_projections: any[];
-    contacts: any[];
+    job: Record<string, unknown>;
+    project: Record<string, unknown>;
+    dates: {
+      est_start_date?: string | Date;
+      est_complete_date?: string | Date;
+      projected_complete_date?: string | Date;
+      start_date?: string | Date;
+      complete_date?: string | Date;
+      create_date?: string | Date;
+      [key: string]: unknown;
+    };
+    phases: Array<Record<string, unknown>>;
+    udf: Record<string, unknown>;
+    cost_projections: Array<Record<string, unknown>>;
+    contacts: Array<Record<string, unknown>>;
   } | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -599,7 +607,7 @@ export default function SpectrumPage() {
     setSuccess(null);
     
     try {
-      const params: any = {
+      const params: Record<string, string | undefined> = {
         company_code: filters.company_code || undefined,
         status_code: filters.status_code || undefined,
         cost_center: filters.cost_center || undefined,
@@ -630,7 +638,7 @@ export default function SpectrumPage() {
     setSuccess(null);
     
     try {
-      const params: any = {
+      const params: Record<string, string | undefined> = {
         company_code: filters.company_code || undefined,
         status_code: filters.status_code || undefined,
         cost_center: filters.cost_center || undefined,
@@ -735,7 +743,7 @@ export default function SpectrumPage() {
     }
   };
 
-  const importPhasesToDatabase = async (phasesToImport?: any[], label?: string) => {
+  const importPhasesToDatabase = async (phasesToImport?: Array<Record<string, unknown>>, label?: string) => {
     // Use phasesEnhanced if available (from GetPhaseEnhanced tab), otherwise use phases (from GetPhase tab)
     const phasesData = phasesToImport || (activeTab === 'getphaseenhanced' ? phasesEnhanced : phases);
     const isEnhanced = activeTab === 'getphaseenhanced' || (phasesToImport === phasesEnhanced);
@@ -968,7 +976,7 @@ export default function SpectrumPage() {
       )
     },
     { header: 'Description', accessor: (row: SpectrumJobDates) => row.Job_Description || '-' },
-    { header: 'Division', accessor: (row: SpectrumJobDates) => (row as any).Division || '-' },
+    { header: 'Division', accessor: (row: SpectrumJobDates) => (row as Record<string, unknown>).Division as string || '-' },
     { header: 'Est Start Date', accessor: (row: SpectrumJobDates) => row.Est_Start_Date || '-' },
     { header: 'Est Complete Date', accessor: (row: SpectrumJobDates) => row.Est_Complete_Date || '-' },
     { header: 'Projected Complete', accessor: (row: SpectrumJobDates) => row.Projected_Complete_Date || '-' },
@@ -1013,7 +1021,7 @@ export default function SpectrumPage() {
         </button>
       )
     },
-    { header: 'Division', accessor: (row: SpectrumPhase) => (row as any).Division || '-' },
+    { header: 'Division', accessor: (row: SpectrumPhase) => (row as Record<string, unknown>).Division as string || '-' },
     { header: 'Phase Code', accessor: (row: SpectrumPhase) => row.Phase_Code || '-' },
     { header: 'Cost Type', accessor: (row: SpectrumPhase) => row.Cost_Type || '-' },
     { header: 'Description', accessor: (row: SpectrumPhase) => row.Description || '-' },
@@ -1038,7 +1046,7 @@ export default function SpectrumPage() {
         </button>
       )
     },
-    { header: 'Division', accessor: (row: SpectrumPhaseEnhanced) => (row as any).Division || '-' },
+    { header: 'Division', accessor: (row: SpectrumPhaseEnhanced) => (row as Record<string, unknown>).Division as string || '-' },
     { header: 'Phase Code', accessor: (row: SpectrumPhaseEnhanced) => row.Phase_Code || '-' },
     { header: 'Cost Type', accessor: (row: SpectrumPhaseEnhanced) => row.Cost_Type || '-' },
     { header: 'Description', accessor: (row: SpectrumPhaseEnhanced) => row.Description || '-' },
@@ -1821,7 +1829,7 @@ export default function SpectrumPage() {
                         {loading ? 'Importing...' : 'Import to Database'}
                       </button>
                     </div>
-                    <DataTable data={paginatedJobDates} columns={jobDatesColumns} />
+                    <DataTable data={paginatedJobDates.map((item, idx) => ({ ...item, id: item.Job_Number || `job-date-${idx}` }))} columns={jobDatesColumns} />
                     <PaginationControls
                       currentPage={currentPageDates}
                       totalPages={totalPagesDates}
@@ -1845,7 +1853,7 @@ export default function SpectrumPage() {
                   <>
                     <div className="mb-4">
                       <button
-                        onClick={() => importPhasesToDatabase(phases, 'phases')}
+                        onClick={() => importPhasesToDatabase(phases as Array<Record<string, unknown>>, 'phases')}
                         disabled={loading || phases.length === 0}
                         className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                       >
@@ -1885,7 +1893,7 @@ export default function SpectrumPage() {
                                       </button>
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                      {(firstPhase as any).Division || '-'}
+                                      {(firstPhase as Record<string, unknown>).Division as string || '-'}
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
                                       <button
@@ -1900,7 +1908,7 @@ export default function SpectrumPage() {
                                     <tr>
                                       <td colSpan={3} className="px-4 py-3 bg-gray-50">
                                         <div className="overflow-x-auto">
-                                          <DataTable data={jobPhases} columns={phaseColumns.slice(2)} />
+                                          <DataTable data={jobPhases.map((item, idx) => ({ ...item, id: `${item.Company_Code}-${item.Job_Number}-${item.Phase_Code}-${idx}` }))} columns={phaseColumns.slice(2)} />
                                         </div>
                                       </td>
                                     </tr>
@@ -1935,7 +1943,7 @@ export default function SpectrumPage() {
                       <>
                         <div className="mb-4">
                           <button
-                            onClick={() => importPhasesToDatabase(phasesEnhanced, 'enhanced phases')}
+                            onClick={() => importPhasesToDatabase(phasesEnhanced as Array<Record<string, unknown>>, 'enhanced phases')}
                             disabled={loading || phasesEnhanced.length === 0}
                             className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                           >
@@ -1975,7 +1983,7 @@ export default function SpectrumPage() {
                                       </button>
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                      {(firstPhase as any).Division || '-'}
+                                      {(firstPhase as Record<string, unknown>).Division as string || '-'}
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
                                       <button
@@ -1990,7 +1998,7 @@ export default function SpectrumPage() {
                                     <tr>
                                       <td colSpan={3} className="px-4 py-3 bg-gray-50">
                                         <div className="overflow-x-auto">
-                                          <DataTable data={jobPhases} columns={phaseEnhancedColumns.slice(2)} />
+                                          <DataTable data={jobPhases.map((item, idx) => ({ ...item, id: `${item.Company_Code}-${item.Job_Number}-${item.Phase_Code}-${idx}` }))} columns={phaseEnhancedColumns.slice(2)} />
                                         </div>
                                       </td>
                                     </tr>
@@ -2031,16 +2039,16 @@ export default function SpectrumPage() {
                       e.preventDefault();
                       const formData = new FormData(e.currentTarget);
                       const projectionData: SpectrumJobCostProjection = {
-                        company_code: formData.get('company_code') as string || 'BSM',
-                        job_number: formData.get('job_number') as string,
-                        phase_code: formData.get('phase_code') as string,
-                        cost_type: formData.get('cost_type') as string,
-                        transaction_date: formData.get('transaction_date') as string,
-                        amount: formData.get('amount') ? parseFloat(formData.get('amount') as string) : undefined,
-                        projected_hours: formData.get('projected_hours') ? parseFloat(formData.get('projected_hours') as string) : undefined,
-                        projected_quantity: formData.get('projected_quantity') ? parseFloat(formData.get('projected_quantity') as string) : undefined,
-                        note: formData.get('note') as string || undefined,
-                        operator: formData.get('operator') as string || undefined,
+                        Company_Code: formData.get('company_code') as string || 'BSM',
+                        Job_Number: formData.get('job_number') as string,
+                        Phase_Code: formData.get('phase_code') as string,
+                        Cost_Type: formData.get('cost_type') as string,
+                        Transaction_Date: formData.get('transaction_date') as string,
+                        Amount: formData.get('amount') ? parseFloat(formData.get('amount') as string) : undefined,
+                        Projected_Hours: formData.get('projected_hours') ? parseFloat(formData.get('projected_hours') as string) : undefined,
+                        Projected_Quantity: formData.get('projected_quantity') ? parseFloat(formData.get('projected_quantity') as string) : undefined,
+                        Note: formData.get('note') as string || undefined,
+                        Operator: formData.get('operator') as string || undefined,
                       };
                       postCostProjection(projectionData);
                     }}
@@ -2239,59 +2247,59 @@ export default function SpectrumPage() {
                     <div>
                       <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-2 sm:mb-3 border-b pb-2">Spectrum Job Information</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                        {comprehensiveJobDetails.job.division && (
+                        {String(comprehensiveJobDetails.job.division || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Division</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.division}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.division)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.customer_name && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.customer_name || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Customer</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.customer_name}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.customer_name)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.project_manager && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.project_manager || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Project Manager</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.project_manager}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.project_manager)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.superintendent && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.superintendent || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Superintendent</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.superintendent}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.superintendent)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.original_contract && (
+                        ) : null}
+                        {comprehensiveJobDetails.job.original_contract ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Original Contract</label>
-                            <p className="text-base text-gray-900">${comprehensiveJobDetails.job.original_contract.toLocaleString()}</p>
+                            <p className="text-base text-gray-900">${typeof comprehensiveJobDetails.job.original_contract === 'number' ? comprehensiveJobDetails.job.original_contract.toLocaleString() : String(comprehensiveJobDetails.job.original_contract)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.status_code && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.status_code || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Status</label>
                             <p className="text-base text-gray-900">
-                              {comprehensiveJobDetails.job.status_code === 'A' ? 'Active' 
-                               : comprehensiveJobDetails.job.status_code === 'I' ? 'Inactive'
-                               : comprehensiveJobDetails.job.status_code === 'C' ? 'Complete'
-                               : comprehensiveJobDetails.job.status_code}
+                              {String(comprehensiveJobDetails.job.status_code) === 'A' ? 'Active' 
+                               : String(comprehensiveJobDetails.job.status_code) === 'I' ? 'Inactive'
+                               : String(comprehensiveJobDetails.job.status_code) === 'C' ? 'Complete'
+                               : String(comprehensiveJobDetails.job.status_code)}
                             </p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.job_description && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.job_description || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Job Description</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.job_description}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.job_description)}</p>
                           </div>
-                        )}
-                        {comprehensiveJobDetails.job.customer_code && (
+                        ) : null}
+                        {String(comprehensiveJobDetails.job.customer_code || '') ? (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Customer Code</label>
-                            <p className="text-base text-gray-900">{comprehensiveJobDetails.job.customer_code}</p>
+                            <p className="text-base text-gray-900">{String(comprehensiveJobDetails.job.customer_code)}</p>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   )}
@@ -2301,34 +2309,34 @@ export default function SpectrumPage() {
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Job Dates</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {comprehensiveJobDetails.dates.est_start_date && (
+                        {comprehensiveJobDetails.dates.est_start_date && String(comprehensiveJobDetails.dates.est_start_date) && (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Est. Start Date</label>
-                            <p className="text-base text-gray-900">{new Date(comprehensiveJobDetails.dates.est_start_date).toLocaleDateString()}</p>
+                            <p className="text-base text-gray-900">{new Date(String(comprehensiveJobDetails.dates.est_start_date)).toLocaleDateString()}</p>
                           </div>
                         )}
-                        {comprehensiveJobDetails.dates.est_complete_date && (
+                        {comprehensiveJobDetails.dates.est_complete_date && String(comprehensiveJobDetails.dates.est_complete_date) && (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Est. Complete Date</label>
-                            <p className="text-base text-gray-900">{new Date(comprehensiveJobDetails.dates.est_complete_date).toLocaleDateString()}</p>
+                            <p className="text-base text-gray-900">{new Date(String(comprehensiveJobDetails.dates.est_complete_date)).toLocaleDateString()}</p>
                           </div>
                         )}
-                        {comprehensiveJobDetails.dates.projected_complete_date && (
+                        {comprehensiveJobDetails.dates.projected_complete_date && String(comprehensiveJobDetails.dates.projected_complete_date) && (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Projected Complete Date</label>
-                            <p className="text-base text-gray-900">{new Date(comprehensiveJobDetails.dates.projected_complete_date).toLocaleDateString()}</p>
+                            <p className="text-base text-gray-900">{new Date(String(comprehensiveJobDetails.dates.projected_complete_date)).toLocaleDateString()}</p>
                           </div>
                         )}
-                        {comprehensiveJobDetails.dates.start_date && (
+                        {comprehensiveJobDetails.dates.start_date && String(comprehensiveJobDetails.dates.start_date) && (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Actual Start Date</label>
-                            <p className="text-base text-gray-900">{new Date(comprehensiveJobDetails.dates.start_date).toLocaleDateString()}</p>
+                            <p className="text-base text-gray-900">{new Date(String(comprehensiveJobDetails.dates.start_date)).toLocaleDateString()}</p>
                           </div>
                         )}
-                        {comprehensiveJobDetails.dates.complete_date && (
+                        {comprehensiveJobDetails.dates.complete_date && String(comprehensiveJobDetails.dates.complete_date) && (
                           <div>
                             <label className="text-sm font-medium text-gray-500 block mb-1">Actual Complete Date</label>
-                            <p className="text-base text-gray-900">{new Date(comprehensiveJobDetails.dates.complete_date).toLocaleDateString()}</p>
+                            <p className="text-base text-gray-900">{new Date(String(comprehensiveJobDetails.dates.complete_date)).toLocaleDateString()}</p>
                           </div>
                         )}
                       </div>
@@ -2336,7 +2344,7 @@ export default function SpectrumPage() {
                   )}
 
                   {/* Phases */}
-                  {comprehensiveJobDetails.phases && comprehensiveJobDetails.phases.length > 0 && (
+                  {comprehensiveJobDetails.phases && Array.isArray(comprehensiveJobDetails.phases) && comprehensiveJobDetails.phases.length > 0 && (
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Phases ({comprehensiveJobDetails.phases.length})</h3>
                       <div className="overflow-x-auto">
@@ -2353,25 +2361,25 @@ export default function SpectrumPage() {
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {comprehensiveJobDetails.phases.map((phase: any, idx: number) => (
+                            {comprehensiveJobDetails.phases.map((phase: Record<string, unknown>, idx: number) => (
                               <tr key={idx} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 text-sm text-gray-900">{phase.phase_code}</td>
-                                <td className="px-4 py-3 text-sm text-gray-900">{phase.cost_type || '-'}</td>
-                                <td className="px-4 py-3 text-sm text-gray-900">{phase.description || '-'}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.phase_code || '-')}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.cost_type || '-')}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.description || '-')}</td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {phase.jtd_actual_dollars ? `$${phase.jtd_actual_dollars.toLocaleString()}` : '-'}
+                                  {phase.jtd_actual_dollars ? `$${typeof phase.jtd_actual_dollars === 'number' ? phase.jtd_actual_dollars.toLocaleString() : String(phase.jtd_actual_dollars)}` : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {phase.projected_dollars ? `$${phase.projected_dollars.toLocaleString()}` : '-'}
+                                  {phase.projected_dollars ? `$${typeof phase.projected_dollars === 'number' ? phase.projected_dollars.toLocaleString() : String(phase.projected_dollars)}` : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {phase.current_estimated_dollars ? `$${phase.current_estimated_dollars.toLocaleString()}` : '-'}
+                                  {phase.current_estimated_dollars ? `$${typeof phase.current_estimated_dollars === 'number' ? phase.current_estimated_dollars.toLocaleString() : String(phase.current_estimated_dollars)}` : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {phase.status_code === 'A' ? 'Active' 
-                                   : phase.status_code === 'I' ? 'Inactive'
-                                   : phase.status_code === 'C' ? 'Complete'
-                                   : phase.status_code || '-'}
+                                  {String(phase.status_code) === 'A' ? 'Active' 
+                                   : String(phase.status_code) === 'I' ? 'Inactive'
+                                   : String(phase.status_code) === 'C' ? 'Complete'
+                                   : String(phase.status_code || '-')}
                                 </td>
                               </tr>
                             ))}
@@ -2398,18 +2406,18 @@ export default function SpectrumPage() {
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {comprehensiveJobDetails.cost_projections.map((proj: any, idx: number) => (
+                            {comprehensiveJobDetails.cost_projections.map((proj: Record<string, unknown>, idx: number) => (
                               <tr key={idx} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 text-sm text-gray-900">{proj.phase_code}</td>
-                                <td className="px-4 py-3 text-sm text-gray-900">{proj.cost_type}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.phase_code || '-')}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.cost_type || '-')}</td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {proj.transaction_date ? new Date(proj.transaction_date).toLocaleDateString() : '-'}
+                                  {proj.transaction_date ? new Date(String(proj.transaction_date)).toLocaleDateString() : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  {proj.amount ? `$${proj.amount.toLocaleString()}` : '-'}
+                                  {proj.amount ? `$${typeof proj.amount === 'number' ? proj.amount.toLocaleString() : String(proj.amount)}` : '-'}
                                 </td>
-                                <td className="px-4 py-3 text-sm text-gray-900">{proj.projected_hours || '-'}</td>
-                                <td className="px-4 py-3 text-sm text-gray-900">{proj.projected_quantity || '-'}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.projected_hours || '-')}</td>
+                                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.projected_quantity || '-')}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2438,34 +2446,34 @@ export default function SpectrumPage() {
                   )}
 
                   {/* Contacts */}
-                  {comprehensiveJobDetails.contacts && comprehensiveJobDetails.contacts.length > 0 && (
+                  {comprehensiveJobDetails.contacts && Array.isArray(comprehensiveJobDetails.contacts) && comprehensiveJobDetails.contacts.length > 0 && (
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Contacts ({comprehensiveJobDetails.contacts.length})</h3>
                       <div className="space-y-4">
-                        {comprehensiveJobDetails.contacts.map((contact: any) => (
-                          <div key={contact.contact_id} className="border border-gray-200 rounded-lg p-4">
+                        {comprehensiveJobDetails.contacts.map((contact: Record<string, unknown>, idx: number) => (
+                          <div key={contact.contact_id ? String(contact.contact_id) : `contact-${idx}`} className="border border-gray-200 rounded-lg p-4">
                             <h4 className="font-semibold text-gray-900 mb-2">
-                              {contact.first_name} {contact.last_name}
-                              {contact.title && <span className="text-sm font-normal text-gray-500 ml-2">- {contact.title}</span>}
+                              {String(contact.first_name || '')} {String(contact.last_name || '')}
+                              {String(contact.title || '') ? <span className="text-sm font-normal text-gray-500 ml-2">- {String(contact.title)}</span> : null}
                             </h4>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-gray-600">
-                              {contact.phone_number && (
+                              {String(contact.phone_number || '') ? (
                                 <div>
-                                  <span className="font-medium">Phone:</span> {contact.phone_number}
+                                  <span className="font-medium">Phone:</span> {String(contact.phone_number)}
                                 </div>
-                              )}
-                              {contact.email1 && (
+                              ) : null}
+                              {String(contact.email1 || '') ? (
                                 <div>
-                                  <span className="font-medium">Email:</span> {contact.email1}
+                                  <span className="font-medium">Email:</span> {String(contact.email1)}
                                 </div>
-                              )}
-                              {contact.addr_1 && (
+                              ) : null}
+                              {String(contact.addr_1 || '') ? (
                                 <div>
-                                  <span className="font-medium">Address:</span> {contact.addr_1}
-                                  {contact.addr_city && `, ${contact.addr_city}`}
-                                  {contact.addr_state && ` ${contact.addr_state}`}
+                                  <span className="font-medium">Address:</span> {String(contact.addr_1)}
+                                  {String(contact.addr_city || '') ? `, ${String(contact.addr_city)}` : ''}
+                                  {String(contact.addr_state || '') ? ` ${String(contact.addr_state)}` : ''}
                                 </div>
-                              )}
+                              ) : null}
                             </div>
                           </div>
                         ))}

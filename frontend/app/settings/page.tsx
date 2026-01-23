@@ -585,7 +585,7 @@ export default function SettingsPage() {
                                     showPasswordToggle
                                     required
                                   />
-                                  <Button type="submit" isLoading={loading} size="sm">
+                                  <Button type="submit" isLoading={loading}>
                                     {branchPasswordStatuses[branch.id] ? 'Update' : 'Set'}
                                   </Button>
                                 </form>

@@ -397,7 +397,7 @@ interface Project {
 }
 
 // Admin Dashboard Component
-function AdminDashboard({ stats, loading, projects, timeStats, timeLoading }: AdminDashboardProps) {
+function AdminDashboard({ stats, loading, projects }: AdminDashboardProps) {
   const router = useRouter();
   
   return (
@@ -530,9 +530,27 @@ interface BranchManagerDashboardProps {
   loading: boolean;
 }
 
+interface Meeting {
+  id: number;
+  meeting_date: string;
+  created_by: {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+  };
+  branch: {
+    id: number;
+    name: string;
+  } | null;
+  notes: string | null;
+  meeting_jobs_count: number;
+  created_at: string;
+}
+
 function BranchManagerDashboard({ stats, loading }: BranchManagerDashboardProps) {
   const router = useRouter();
-  const [meetings, setMeetings] = useState<any[]>([]);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
 
   const fetchMeetings = useCallback(async () => {
@@ -762,7 +780,7 @@ interface ProjectManagerDashboardProps {
 
 function ProjectManagerDashboard({ stats, loading }: ProjectManagerDashboardProps) {
   const router = useRouter();
-  const [meetings, setMeetings] = useState<any[]>([]);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(false);
 
   const fetchMeetings = useCallback(async () => {

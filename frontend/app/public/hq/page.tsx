@@ -24,11 +24,32 @@ interface Project {
   financial_percent_complete?: number;
   is_public: boolean;
   public_pin?: string;
+  schedule_status?: {
+    status: string;
+    days_late?: number;
+  };
+}
+
+interface SpectrumDates {
+  est_start_date?: string | Date;
+  est_complete_date?: string | Date;
+  projected_complete_date?: string | Date;
+  start_date?: string | Date;
+  complete_date?: string | Date;
+  create_date?: string | Date;
 }
 
 interface ProjectDetails {
   project: Project;
-  spectrum_data?: any;
+  spectrum_data?: {
+    job?: Record<string, unknown>;
+    project?: Record<string, unknown>;
+    dates?: SpectrumDates;
+    phases?: Array<Record<string, unknown>>;
+    udf?: Record<string, unknown>;
+    cost_projections?: Array<Record<string, unknown>>;
+    contacts?: Array<Record<string, unknown>>;
+  };
 }
 
 const ITEMS_PER_PAGE = 20;
@@ -75,16 +96,17 @@ export default function HQPortalPage() {
       } else if (response.data && Array.isArray(response.data.results)) {
         projectsData = response.data.results;
       } else if (response.data && typeof response.data === 'object') {
-        projectsData = Object.values(response.data).find((val: any) => Array.isArray(val)) as any[] || [];
+        projectsData = (Object.values(response.data).find((val: unknown) => Array.isArray(val)) as Project[]) || [];
       }
       
       setAllProjects(projectsData);
       setAuthenticated(true);
       sessionStorage.setItem('hq_portal_password', pwd);
       setError(null);
-    } catch (err: any) {
+    } catch (err) {
+      const error = err as { response?: { data?: { detail?: string } }; message?: string };
       console.error('HQ Portal authentication error:', err);
-      const errorMessage = err.response?.data?.detail || err.message || 'Invalid password or unable to load projects.';
+      const errorMessage = error.response?.data?.detail || error.message || 'Invalid password or unable to load projects.';
       setError(errorMessage);
       setAuthenticated(false);
       sessionStorage.removeItem('hq_portal_password');
@@ -151,7 +173,7 @@ export default function HQPortalPage() {
 
   // Filter projects
   const filteredProjects = useMemo(() => {
-    let filtered = allProjects.filter(project => {
+    const filtered = allProjects.filter(project => {
       // Status filter - check both status and spectrum_status_code
       if (statusFilter !== 'ALL') {
         const projectStatus = project.spectrum_status_code === 'A' ? 'ACTIVE' :
@@ -476,9 +498,9 @@ export default function HQPortalPage() {
                           <label className="text-sm font-medium text-gray-500">Start Date</label>
                           <p className="text-gray-900">
                             {projectDetails?.spectrum_data?.dates?.start_date 
-                              ? new Date(projectDetails.spectrum_data.dates.start_date).toLocaleDateString()
+                              ? new Date(String(projectDetails.spectrum_data.dates.start_date)).toLocaleDateString()
                               : projectDetails?.spectrum_data?.dates?.est_start_date
-                              ? new Date(projectDetails.spectrum_data.dates.est_start_date).toLocaleDateString()
+                              ? new Date(String(projectDetails.spectrum_data.dates.est_start_date)).toLocaleDateString()
                               : selectedProject.start_date
                               ? new Date(selectedProject.start_date).toLocaleDateString()
                               : 'N/A'}
@@ -490,11 +512,11 @@ export default function HQPortalPage() {
                           <label className="text-sm font-medium text-gray-500">End Date</label>
                           <p className="text-gray-900">
                             {projectDetails?.spectrum_data?.dates?.complete_date
-                              ? new Date(projectDetails.spectrum_data.dates.complete_date).toLocaleDateString()
+                              ? new Date(String(projectDetails.spectrum_data.dates.complete_date)).toLocaleDateString()
                               : projectDetails?.spectrum_data?.dates?.projected_complete_date
-                              ? new Date(projectDetails.spectrum_data.dates.projected_complete_date).toLocaleDateString()
+                              ? new Date(String(projectDetails.spectrum_data.dates.projected_complete_date)).toLocaleDateString()
                               : projectDetails?.spectrum_data?.dates?.est_complete_date
-                              ? new Date(projectDetails.spectrum_data.dates.est_complete_date).toLocaleDateString()
+                              ? new Date(String(projectDetails.spectrum_data.dates.est_complete_date)).toLocaleDateString()
                               : selectedProject.estimated_end_date
                               ? new Date(selectedProject.estimated_end_date).toLocaleDateString()
                               : 'N/A'}
@@ -586,7 +608,7 @@ export default function HQPortalPage() {
                               {projectDetails.spectrum_data.dates.create_date && (
                                 <div className="flex justify-between">
                                   <span className="text-gray-600">Create Date:</span>
-                                  <span className="text-gray-900">{new Date(projectDetails.spectrum_data.dates.create_date).toLocaleDateString()}</span>
+                                  <span className="text-gray-900">{new Date(String(projectDetails.spectrum_data.dates.create_date)).toLocaleDateString()}</span>
                                 </div>
                               )}
                             </div>
@@ -594,29 +616,29 @@ export default function HQPortalPage() {
                         )}
                         
                         {/* Phases */}
-                        {projectDetails.spectrum_data.phases && projectDetails.spectrum_data.phases.length > 0 && (
+                        {projectDetails.spectrum_data.phases && Array.isArray(projectDetails.spectrum_data.phases) && projectDetails.spectrum_data.phases.length > 0 && (
                           <div>
                             <h4 className="font-medium text-gray-700 mb-3">Phases ({projectDetails.spectrum_data.phases.length})</h4>
                             <div className="space-y-3 max-h-96 overflow-y-auto">
-                              {projectDetails.spectrum_data.phases.map((phase: any, idx: number) => (
+                              {projectDetails.spectrum_data.phases.map((phase: { phase_code?: string; cost_type?: string; description?: string; status_code?: string; jtd_quantity?: number; jtd_hours?: number; jtd_actual_dollars?: number; [key: string]: unknown }, idx: number) => (
                                 <div key={idx} className="border rounded-lg p-3 bg-gray-50">
                                   <div className="flex justify-between items-start mb-2">
                                     <div>
-                                      <span className="font-medium text-gray-900">Phase {phase.phase_code}</span>
-                                      {phase.cost_type && <span className="text-gray-600 ml-2">({phase.cost_type})</span>}
+                                      <span className="font-medium text-gray-900">Phase {String(phase.phase_code || '')}</span>
+                                      {phase.cost_type && <span className="text-gray-600 ml-2">({String(phase.cost_type)})</span>}
                                     </div>
                                     {phase.status_code && (
                                       <span className={`px-2 py-1 text-xs rounded ${
-                                        phase.status_code === 'A' ? 'bg-green-100 text-green-800' :
-                                        phase.status_code === 'C' ? 'bg-blue-100 text-blue-800' :
+                                        String(phase.status_code) === 'A' ? 'bg-green-100 text-green-800' :
+                                        String(phase.status_code) === 'C' ? 'bg-blue-100 text-blue-800' :
                                         'bg-gray-100 text-gray-800'
                                       }`}>
-                                        {phase.status_code === 'A' ? 'Active' : phase.status_code === 'C' ? 'Complete' : 'Inactive'}
+                                        {String(phase.status_code) === 'A' ? 'Active' : String(phase.status_code) === 'C' ? 'Complete' : 'Inactive'}
                                       </span>
                                     )}
                                   </div>
                                   {phase.description && (
-                                    <p className="text-sm text-gray-700 mb-2">{phase.description}</p>
+                                    <p className="text-sm text-gray-700 mb-2">{String(phase.description)}</p>
                                   )}
                                   <div className="grid grid-cols-3 gap-2 text-xs">
                                     {phase.jtd_quantity != null && (
@@ -645,15 +667,15 @@ export default function HQPortalPage() {
                         )}
                         
                         {/* UDFs */}
-                        {projectDetails.spectrum_data.udf && Object.values(projectDetails.spectrum_data.udf).some((val: any) => val) && (
+                        {projectDetails.spectrum_data.udf && Object.values(projectDetails.spectrum_data.udf).some((val: unknown) => val) && (
                           <div>
                             <h4 className="font-medium text-gray-700 mb-3">User Defined Fields</h4>
                             <div className="grid grid-cols-2 gap-2 text-sm">
-                              {Object.entries(projectDetails.spectrum_data.udf).map(([key, value]: [string, any]) => 
+                              {Object.entries(projectDetails.spectrum_data.udf).map(([key, value]: [string, unknown]) => 
                                 value ? (
                                   <div key={key} className="flex justify-between">
                                     <span className="text-gray-600">{key.toUpperCase()}:</span>
-                                    <span className="text-gray-900">{value}</span>
+                                    <span className="text-gray-900">{String(value)}</span>
                                   </div>
                                 ) : null
                               )}
@@ -662,29 +684,29 @@ export default function HQPortalPage() {
                         )}
                         
                         {/* Contacts */}
-                        {projectDetails.spectrum_data.contacts && projectDetails.spectrum_data.contacts.length > 0 && (
+                        {projectDetails.spectrum_data.contacts && Array.isArray(projectDetails.spectrum_data.contacts) && projectDetails.spectrum_data.contacts.length > 0 && (
                           <div>
                             <h4 className="font-medium text-gray-700 mb-3">Contacts ({projectDetails.spectrum_data.contacts.length})</h4>
                             <div className="space-y-2">
-                              {projectDetails.spectrum_data.contacts.map((contact: any, idx: number) => (
+                              {projectDetails.spectrum_data.contacts.map((contact: { first_name?: string; last_name?: string; title?: string; phone?: string; email?: string; [key: string]: unknown }, idx: number) => (
                                 <div key={idx} className="border rounded-lg p-3 bg-gray-50">
                                   <div className="font-medium text-gray-900">
-                                    {contact.first_name} {contact.last_name}
-                                    {contact.title && <span className="text-gray-600 font-normal ml-2">({contact.title})</span>}
+                                    {String(contact.first_name || '')} {String(contact.last_name || '')}
+                                    {contact.title && <span className="text-gray-600 font-normal ml-2">({String(contact.title)})</span>}
                                   </div>
-                                  {contact.phone_number && (
-                                    <p className="text-sm text-gray-600">Phone: {contact.phone_number}</p>
-                                  )}
-                                  {contact.email1 && (
-                                    <p className="text-sm text-gray-600">Email: {contact.email1}</p>
-                                  )}
-                                  {contact.addr_1 && (
+                                  {String(contact.phone_number || '') ? (
+                                    <p className="text-sm text-gray-600">Phone: {String(contact.phone_number)}</p>
+                                  ) : null}
+                                  {String(contact.email1 || '') ? (
+                                    <p className="text-sm text-gray-600">Email: {String(contact.email1)}</p>
+                                  ) : null}
+                                  {String(contact.addr_1 || '') ? (
                                     <p className="text-sm text-gray-600">
-                                      {contact.addr_1}
-                                      {contact.addr_city && `, ${contact.addr_city}`}
-                                      {contact.addr_state && ` ${contact.addr_state}`}
+                                      {String(contact.addr_1)}
+                                      {String(contact.addr_city || '') ? `, ${String(contact.addr_city)}` : ''}
+                                      {String(contact.addr_state || '') ? ` ${String(contact.addr_state)}` : ''}
                                     </p>
-                                  )}
+                                  ) : null}
                                 </div>
                               ))}
                             </div>

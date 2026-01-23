@@ -39,6 +39,7 @@ export default function BranchDetailPage() {
       notes?: string;
       created_at?: string;
       updated_at?: string;
+      spectrum_division_code?: string;
     };
     employee_count: number;
     active_employees: number;

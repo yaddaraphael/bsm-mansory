@@ -147,7 +147,7 @@ export default function MeetingReviewPage() {
   const [filterBranch, setFilterBranch] = useState<string>('ALL');
   const [filterProjectManager, setFilterProjectManager] = useState<string>('ALL');
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
-  const [projectManagers, setProjectManagers] = useState<{ id: number; name: string; full_name: string }[]>([]);
+  const [projectManagers, setProjectManagers] = useState<{ id: string | number; name: string; full_name: string }[]>([]);
   const [expandedJobs, setExpandedJobs] = useState<Set<number>>(new Set());
   
   // Pagination state
