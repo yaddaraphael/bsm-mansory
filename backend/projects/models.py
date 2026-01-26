@@ -1,3 +1,4 @@
+#backend/projects/models.py
 from django.db import models
 from django.db.models import Sum, Max
 from django.utils import timezone
@@ -207,16 +208,38 @@ class Project(models.Model):
     
     def get_schedule_status(self):
         """
-        Calculate Green/Yellow/Red status based on forecast vs baseline.
+        Calculate Green/Yellow/Red status based on forecast vs baseline and completion.
         Returns: ('GREEN'|'YELLOW'|'RED', forecast_date, days_late)
+        - GREEN: On track (forecast <= baseline) OR project is completed
+        - YELLOW: Slightly behind (1-7 days late)
+        - RED: Danger (deadline passed and not cleared/completed)
         """
+        from django.utils import timezone
+        
+        # If project is completed, always show green
+        if self.status == 'COMPLETED':
+            return ('GREEN', self.estimated_end_date, 0)
+        
         baseline_date = self.estimated_end_date
         forecast_date = self.calculate_forecast_completion_date()
         
         if not forecast_date:
+            # Check if baseline date has passed
+            today = timezone.now().date()
+            if baseline_date and baseline_date < today:
+                days_past_deadline = (today - baseline_date).days
+                return ('RED', baseline_date, days_past_deadline)
             return ('GREEN', baseline_date, 0)
         
         days_late = (forecast_date - baseline_date).days
+        
+        # Also check if baseline deadline has already passed
+        today = timezone.now().date()
+        if baseline_date and baseline_date < today and self.status != 'COMPLETED':
+            days_past_deadline = (today - baseline_date).days
+            # If deadline passed and not completed, show RED
+            if days_past_deadline > 0:
+                return ('RED', forecast_date, days_past_deadline)
         
         if days_late <= 0:
             return ('GREEN', forecast_date, 0)

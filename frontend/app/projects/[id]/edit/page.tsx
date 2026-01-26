@@ -66,6 +66,9 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
   });
 
   const canEdit = user?.role === 'ROOT_SUPERADMIN';
+  // Check if project is completed from Spectrum - disable all editing
+  const isCompletedFromSystem = project?.status === 'COMPLETED' || project?.spectrum_status_code === 'C';
+  const isReadOnly = isCompletedFromSystem || !canEdit;
 
   useEffect(() => {
     // Fetch users by role
@@ -175,6 +178,17 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (isCompletedFromSystem) {
+      setError('Cannot edit a project that is completed from the system');
+      return;
+    }
+    
+    if (!canEdit) {
+      setError('You do not have permission to edit projects');
+      return;
+    }
+    
     setLoading(true);
     setError('');
     setSuccess(false);
@@ -276,17 +290,47 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
               <h1 className="text-xl md:text-2xl font-bold text-gray-900">Edit Project</h1>
             </div>
 
+            {isCompletedFromSystem && (
+              <Card className="mb-6 bg-yellow-50 border-yellow-200">
+                <div className="flex items-center gap-2 text-yellow-800">
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <p className="font-medium">This project is completed from the system. Editing is disabled.</p>
+                </div>
+              </Card>
+            )}
+
             <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
               <div className="space-y-4 md:space-y-6">
                 <Card title="Basic Information">
                   <div className="space-y-4">
-                    <Input
-                      label="Project Name *"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="e.g., Downtown Office Building"
-                      required
-                    />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Project Name *</label>
+                      <Input
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        placeholder="e.g., Downtown Office Building"
+                        required
+                        readOnly
+                        disabled
+                        className="bg-gray-100 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Project name cannot be changed</p>
+                    </div>
+
+                    {project?.job_number && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Job Number</label>
+                        <Input
+                          value={project.job_number}
+                          readOnly
+                          disabled
+                          className="bg-gray-100 cursor-not-allowed"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Job number cannot be changed</p>
+                      </div>
+                    )}
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Branch *</label>
@@ -295,7 +339,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
                         className="input-field"
                         required
-                        disabled={branchesLoading}
+                        disabled={branchesLoading || isReadOnly}
                       >
                         <option value="">Select a branch</option>
                         {branches.map((branch) => (
@@ -313,6 +357,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                         className="input-field"
                         required
+                        disabled={isReadOnly}
                       >
                         <option value="PENDING">Pending</option>
                         <option value="ACTIVE">Active</option>
@@ -332,6 +377,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         value={formData.start_date}
                         onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
                         required
+                        disabled={isReadOnly}
                       />
                       <Input
                         label="Duration (Days) *"
@@ -341,6 +387,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         placeholder="e.g., 90"
                         required
                         min="1"
+                        disabled={isReadOnly}
                       />
                     </div>
 
@@ -351,6 +398,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                           checked={formData.saturdays}
                           onChange={(e) => setFormData({ ...formData, saturdays: e.target.checked })}
                           className="rounded border-gray-300 text-primary focus:ring-primary"
+                          disabled={isReadOnly}
                         />
                         <span className="text-sm text-gray-700">Include Saturdays as workdays</span>
                       </label>
@@ -360,6 +408,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                           checked={formData.full_weekends}
                           onChange={(e) => setFormData({ ...formData, full_weekends: e.target.checked })}
                           className="rounded border-gray-300 text-primary focus:ring-primary"
+                          disabled={isReadOnly}
                         />
                         <span className="text-sm text-gray-700">Include full weekends as workdays</span>
                       </label>
@@ -375,6 +424,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         value={formData.project_manager}
                         onChange={(e) => setFormData({ ...formData, project_manager: e.target.value })}
                         className="input-field"
+                        disabled={isReadOnly}
                       >
                         <option value="">Select project manager</option>
                         {projectManagers.map((pm) => (
@@ -391,6 +441,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         value={formData.superintendent}
                         onChange={(e) => setFormData({ ...formData, superintendent: e.target.value })}
                         className="input-field"
+                        disabled={isReadOnly}
                       >
                         <option value="">Select superintendent</option>
                         {superintendents.map((superintendent) => (
@@ -407,6 +458,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         value={formData.general_contractor}
                         onChange={(e) => setFormData({ ...formData, general_contractor: e.target.value })}
                         className="input-field"
+                        disabled={isReadOnly}
                       >
                         <option value="">Select general contractor</option>
                         {generalContractors.map((gc) => (
@@ -423,6 +475,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         value={formData.foreman}
                         onChange={(e) => setFormData({ ...formData, foreman: e.target.value })}
                         className="input-field"
+                        disabled={isReadOnly}
                       >
                         <option value="">Select foreman (optional)</option>
                         {foremen.map((foreman) => (
@@ -445,6 +498,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                       onChange={(e) => setFormData({ ...formData, qty_sq: e.target.value })}
                       placeholder="0.00"
                       helpText="Quantity per square foot"
+                      disabled={isReadOnly}
                     />
                     <Input
                       label="Contract Value"
@@ -453,6 +507,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                       value={formData.contract_value}
                       onChange={(e) => setFormData({ ...formData, contract_value: e.target.value })}
                       placeholder="0.00"
+                      disabled={isReadOnly}
                     />
                     <Input
                       label="Contract Balance"
@@ -461,6 +516,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                       value={formData.contract_balance}
                       onChange={(e) => setFormData({ ...formData, contract_balance: e.target.value })}
                       placeholder="0.00"
+                      disabled={isReadOnly}
                     />
                   </div>
                 </Card>
@@ -474,13 +530,15 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                       <div key={index} className="p-4 border rounded-lg bg-gray-50">
                         <div className="flex justify-between items-center mb-3">
                           <h4 className="font-medium text-gray-900">Scope {index + 1}</h4>
-                          <button
-                            type="button"
-                            onClick={() => setScopes(scopes.filter((_, i) => i !== index))}
-                            className="text-red-600 hover:text-red-800 text-sm"
-                          >
-                            Remove
-                          </button>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => setScopes(scopes.filter((_, i) => i !== index))}
+                              className="text-red-600 hover:text-red-800 text-sm"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
@@ -494,6 +552,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                               }}
                               className="input-field"
                               required
+                              disabled={isReadOnly}
                             >
                               <option value="">Select scope type</option>
                               <option value="CMU">CMU</option>
@@ -519,6 +578,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                               }}
                               placeholder="0.00"
                               required
+                              disabled={isReadOnly}
                             />
                           </div>
                           <div>
@@ -531,6 +591,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                                 setScopes(newScopes);
                               }}
                               placeholder="Sq.Ft"
+                              disabled={isReadOnly}
                             />
                           </div>
                           <div>
@@ -543,6 +604,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                                 newScopes[index].start_date = e.target.value;
                                 setScopes(newScopes);
                               }}
+                              disabled={isReadOnly}
                             />
                           </div>
                           <div>
@@ -555,6 +617,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                                 newScopes[index].end_date = e.target.value;
                                 setScopes(newScopes);
                               }}
+                              disabled={isReadOnly}
                             />
                           </div>
                           <div className="md:col-span-2">
@@ -569,25 +632,28 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                               className="input-field"
                               rows={2}
                               placeholder="Additional description for this scope..."
+                              disabled={isReadOnly}
                             />
                           </div>
                         </div>
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => setScopes([...scopes, {
-                        scope_type: '',
-                        quantity: '',
-                        unit: 'Sq.Ft',
-                        start_date: '',
-                        end_date: '',
-                        description: '',
-                      }])}
-                      className="w-full py-2 px-4 border border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-primary hover:text-primary transition-colors"
-                    >
-                      + Add Scope of Work
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setScopes([...scopes, {
+                          scope_type: '',
+                          quantity: '',
+                          unit: 'Sq.Ft',
+                          start_date: '',
+                          end_date: '',
+                          description: '',
+                        }])}
+                        className="w-full py-2 px-4 border border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-primary hover:text-primary transition-colors"
+                      >
+                        + Add Scope of Work
+                      </button>
+                    )}
                   </div>
                 </Card>
 
@@ -599,6 +665,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         checked={formData.is_public}
                         onChange={(e) => setFormData({ ...formData, is_public: e.target.checked })}
                         className="rounded border-gray-300 text-primary focus:ring-primary"
+                        disabled={isReadOnly}
                       />
                       <span className="text-sm text-gray-700">Make this project publicly visible</span>
                     </label>
@@ -609,6 +676,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                         onChange={(e) => setFormData({ ...formData, public_pin: e.target.value })}
                         placeholder="Optional PIN for public access"
                         maxLength={10}
+                        disabled={isReadOnly}
                       />
                     )}
                   </div>
@@ -621,6 +689,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                     className="input-field"
                     rows={4}
                     placeholder="Additional notes about this project..."
+                    disabled={isReadOnly}
                   />
                 </Card>
 
@@ -642,7 +711,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                 )}
 
                 <div className="flex space-x-4">
-                  <Button type="submit" isLoading={loading} className="flex-1">
+                  <Button type="submit" isLoading={loading} className="flex-1" disabled={isReadOnly}>
                     Update Project
                   </Button>
                   <Button

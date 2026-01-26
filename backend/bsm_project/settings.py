@@ -7,6 +7,13 @@ from decouple import config
 import os
 import warnings
 
+# Apply Python 3.14 compatibility patch for Django 4.2.7
+# This fixes the 'super' object has no attribute 'dicts' error
+try:
+    from .python314_patch import *
+except ImportError:
+    pass  # Patch file not found, continue without it
+
 # Suppress pkg_resources deprecation warning from rest_framework_simplejwt
 # This is a known issue in the package and will be fixed in a future version
 warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)

@@ -2478,6 +2478,27 @@ def import_job_dates_to_database(request):
                         defaults=defaults
                     )
                     
+                    # Update Project with dates from Spectrum
+                    project_update_fields = {}
+                    if job_date.est_start_date:
+                        project_update_fields['spectrum_est_start_date'] = job_date.est_start_date
+                    if job_date.est_complete_date:
+                        project_update_fields['spectrum_est_complete_date'] = job_date.est_complete_date
+                    if job_date.projected_complete_date:
+                        project_update_fields['spectrum_projected_complete_date'] = job_date.projected_complete_date
+                    if job_date.start_date:
+                        project_update_fields['spectrum_start_date'] = job_date.start_date
+                    if job_date.complete_date:
+                        project_update_fields['spectrum_complete_date'] = job_date.complete_date
+                    if job_date.create_date:
+                        project_update_fields['spectrum_create_date'] = job_date.create_date
+                    
+                    if project_update_fields:
+                        try:
+                            Project.objects.filter(job_number=job_number).update(**project_update_fields)
+                        except Exception as update_error:
+                            logger.warning(f"Error updating project dates for {job_number}: {update_error}")
+                    
                     if created:
                         imported_count += 1
                     else:

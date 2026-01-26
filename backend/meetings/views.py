@@ -1023,6 +1023,63 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=False, methods=['get'])
+    def project_phases(self, request):
+        """Get meeting phases for a specific project by project ID."""
+        project_id = request.query_params.get('project_id')
+        if not project_id:
+            return Response(
+                {'detail': 'project_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from projects.models import Project
+            project = Project.objects.get(id=project_id)
+            
+            # Get all meeting phases for this project, ordered by meeting date (most recent first)
+            from .models import MeetingJobPhase
+            phases = MeetingJobPhase.objects.filter(
+                meeting_job__project=project
+            ).select_related(
+                'meeting_job__meeting'
+            ).order_by(
+                '-meeting_job__meeting__meeting_date',
+                'phase_code'
+            )
+            
+            # Group by phase_code and get the most recent entry for each phase
+            phase_data = {}
+            for phase in phases:
+                phase_code = phase.phase_code
+                if phase_code not in phase_data:
+                    phase_data[phase_code] = {
+                        'phase_code': phase.phase_code,
+                        'phase_description': phase.phase_description,
+                        'quantity': float(phase.quantity) if phase.quantity else 0,
+                        'installed_quantity': float(phase.installed_quantity) if phase.installed_quantity else 0,
+                        'percent_complete': float(phase.percent_complete),
+                        'meeting_date': phase.meeting_job.meeting.meeting_date.isoformat() if phase.meeting_job.meeting.meeting_date else None,
+                        'updated_at': phase.updated_at.isoformat() if phase.updated_at else None,
+                    }
+            
+            return Response({
+                'project_id': project.id,
+                'project_job_number': project.job_number,
+                'phases': list(phase_data.values())
+            }, status=status.HTTP_200_OK)
+        except Project.DoesNotExist:
+            return Response(
+                {'detail': 'Project not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error getting project phases: {e}", exc_info=True)
+            return Response(
+                {'detail': f'Error getting project phases: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def destroy(self, request, *args, **kwargs):
         """Delete meeting - only admins and superadmins can delete."""
         user = request.user

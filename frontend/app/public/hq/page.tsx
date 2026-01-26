@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
+import axios from 'axios';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
@@ -86,8 +87,13 @@ export default function HQPortalPage() {
     setAuthenticated(false);
     
     try {
-      const response = await api.get('/projects/public/hq/projects/', {
-        params: { password: pwd }
+      // Use axios directly for public endpoint to avoid Authorization header
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+      const response = await axios.get(`${API_URL}/projects/public/hq/projects/`, {
+        params: { password: pwd },
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
       
       let projectsData = [];

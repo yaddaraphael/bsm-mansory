@@ -101,7 +101,7 @@ export function useNotifications() {
       fetchNotifications();
       fetchUnreadCount();
 
-      // Poll for new notifications every 30 seconds (only if authenticated)
+      // Poll for new notifications every 5 minutes (only if authenticated)
       intervalRef.current = setInterval(() => {
         // Check authentication before each poll
         if (authService.isAuthenticated()) {
@@ -113,7 +113,7 @@ export function useNotifications() {
             intervalRef.current = null;
           }
         }
-      }, 30000);
+      }, 300000); // 5 minutes = 300000ms
     } else {
       setLoading(false);
     }

@@ -5,6 +5,11 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.db.models import Q
+
+from django.db.models import OuterRef, Subquery, Sum, Value, FloatField, DecimalField, F, Case, When, ExpressionWrapper
+from django.db.models.functions import Coalesce
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django.conf import settings
 from datetime import datetime
 import os
@@ -15,12 +20,13 @@ from django.template.loader import render_to_string
 from django.contrib.auth import get_user_model
 from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry, SCOPE_OF_WORK_CHOICES
 from .serializers import (
-    ProjectSerializer, ProjectScopeSerializer,
+    ProjectSerializer, ProjectListSerializer, ProjectScopeSerializer,
     DailyReportSerializer, WeeklyChecklistSerializer,
     PublicProjectSerializer, LaborEntrySerializer
 )
 from .utils import generate_job_number
 from .permissions import ProjectViewSetPermission
+from .pagination import StandardResultsSetPagination
 from audit.utils import log_action
 from branches.models import Branch
 from django.contrib.auth.hashers import check_password
@@ -28,14 +34,96 @@ from django.contrib.auth.hashers import check_password
 User = get_user_model()
 
 
+
+def _annotated_projects_queryset(*, include_scopes: bool):
+    """Base queryset for projects endpoints.
+
+    Fixes major performance problems:
+    - Removes N+1 queries caused by serializer method fields that hit Spectrum tables
+    - Removes N+1 queries caused by Project.total_quantity/total_installed/... properties (aggregates per row)
+    - Adds select_related/prefetch_related for nested serializers
+    """
+    # Spectrum subqueries (1 query total)
+    from spectrum.models import SpectrumJob, SpectrumJobDates
+
+    spectrum_job_qs = SpectrumJob.objects.filter(job_number=OuterRef('job_number'))
+    spectrum_dates_qs = SpectrumJobDates.objects.filter(job_number=OuterRef('job_number'))
+
+    # Decimal output fields for aggregates
+    dec_field = DecimalField(max_digits=12, decimal_places=2)
+    zero_dec = Value(0, output_field=dec_field)
+
+    qs = (
+        Project.objects.exclude(job_number__isnull=True)
+        .exclude(job_number='')
+        .select_related(
+            'branch',
+            'project_manager',
+            'superintendent',
+            'foreman',
+            'general_contractor',
+        )
+    )
+
+    if include_scopes:
+        qs = qs.prefetch_related('scopes')
+
+    # Aggregate scope totals ONCE (instead of per project property call)
+    # Use _annot suffix to avoid conflicts with @property methods
+    qs = qs.annotate(
+        total_quantity_annot=Coalesce(Sum('scopes__quantity'), zero_dec),
+        total_installed_annot=Coalesce(Sum('scopes__installed'), zero_dec),
+    ).annotate(
+        remaining_annot=Case(
+            When(total_quantity_annot__gt=F('total_installed_annot'), then=F('total_quantity_annot') - F('total_installed_annot')),
+            default=zero_dec,
+            output_field=dec_field,
+        ),
+        production_percent_complete_annot=Case(
+            When(total_quantity_annot=0, then=Value(0.0)),
+            default=ExpressionWrapper(
+                (F('total_installed_annot') * Value(100.0)) / F('total_quantity_annot'),
+                output_field=FloatField(),
+            ),
+            output_field=FloatField(),
+        ),
+    )
+
+    # Spectrum fields via subquery annotations (avoid per-object DB hits)
+    qs = qs.annotate(
+        spectrum_status_code_annot=Subquery(spectrum_job_qs.values('status_code')[:1]),
+        job_description_annot=Subquery(spectrum_job_qs.values('job_description')[:1]),
+        spectrum_pm_name_annot=Subquery(spectrum_job_qs.values('project_manager')[:1]),
+        projected_complete_date_annot=Subquery(spectrum_dates_qs.values('projected_complete_date')[:1]),
+        actual_complete_date_annot=Subquery(spectrum_dates_qs.values('complete_date')[:1]),
+    )
+
+    return qs
+
+
 class ProjectViewSet(viewsets.ModelViewSet):
-    queryset = Project.objects.all().exclude(job_number__isnull=True).exclude(job_number='').distinct()
     serializer_class = ProjectSerializer
     permission_classes = [ProjectViewSetPermission]
-    filterset_fields = ['status', 'branch', 'is_public']
+
+    # ✅ backend filtering + search + ordering
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status', 'branch', 'is_public', 'project_manager']
     search_fields = ['job_number', 'name', 'branch__name']
-    pagination_class = None  # Disable pagination - we do client-side pagination
-    
+    ordering_fields = ['updated_at', 'created_at', 'name', 'job_number', 'id']
+    ordering = ['-updated_at']
+
+    # ✅ enable pagination (frontend now requests page/page_size)
+    pagination_class = StandardResultsSetPagination
+
+    def get_queryset(self):
+        include_scopes = self.action in {'retrieve', 'create', 'update', 'partial_update'}
+        return _annotated_projects_queryset(include_scopes=include_scopes)
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ProjectListSerializer
+        return ProjectSerializer
+
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def statistics(self, request):
         """
@@ -44,322 +132,48 @@ class ProjectViewSet(viewsets.ModelViewSet):
         For admins/superadmins: stats for all projects or filtered by branch
         """
         from django.db.models import Count, Q
-        
+        from spectrum.models import SpectrumJob
+
         user = request.user
         branch_id = request.query_params.get('branch', None)
-        
-        # Get base queryset based on user role - exclude invalid projects and use distinct()
-        # Only count Projects that have a corresponding SpectrumJob (imported from Spectrum)
-        # This ensures the count matches the dashboard's "Imported Jobs (Spectrum)" count
-        from spectrum.models import SpectrumJob
+
+        # Use a subquery (does not materialize in Python)
         valid_job_numbers = SpectrumJob.objects.values_list('job_number', flat=True).distinct()
-        base_queryset = Project.objects.exclude(job_number__isnull=True).exclude(job_number='').filter(job_number__in=valid_job_numbers).distinct()
-        
+        base_queryset = Project.objects.exclude(job_number__isnull=True).exclude(job_number='').filter(
+            job_number__in=valid_job_numbers
+        )
+
         if user.role in ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']:
             queryset = base_queryset
         elif user.role == 'BRANCH_MANAGER':
-            if user.division:
-                queryset = base_queryset.filter(branch=user.division)
-            else:
-                queryset = Project.objects.none()
+            queryset = base_queryset.filter(branch=user.division) if user.division else Project.objects.none()
         elif user.role == 'PROJECT_MANAGER':
             queryset = base_queryset.filter(project_manager=user)
         else:
             queryset = Project.objects.none()
-        
-        # Filter by branch if specified
+
         if branch_id:
             try:
                 queryset = queryset.filter(branch_id=branch_id)
             except ValueError:
                 pass
-        
-        # Calculate statistics - ensure we only count Projects that have valid job_numbers
-        # Since job_number has unique=True constraint, we should use aggregation with Count(distinct=True)
-        # But to match dashboard's SpectrumJob count, we ensure we're counting correctly
-        from django.db.models import Count, Q
-        
-        # Count total distinct job_numbers (should match SpectrumJob count since job_number is unique)
-        # Use aggregation to ensure accurate counting
-        total = queryset.aggregate(count=Count('job_number', distinct=True))['count'] or 0
-        
-        # Count by status using distinct job_numbers
-        active = queryset.filter(status='ACTIVE').aggregate(count=Count('job_number', distinct=True))['count'] or 0
-        inactive = queryset.filter(status='INACTIVE').aggregate(count=Count('job_number', distinct=True))['count'] or 0
-        completed = queryset.filter(status='COMPLETED').aggregate(count=Count('job_number', distinct=True))['count'] or 0
-        closed = queryset.filter(status='CLOSED').aggregate(count=Count('job_number', distinct=True))['count'] or 0
-        
-        # If branch is specified, get branch name
-        branch_name = None
+
+        stats = queryset.aggregate(
+            total=Count('id', distinct=True),
+            active=Count('id', filter=Q(status='ACTIVE'), distinct=True),
+            inactive=Count('id', filter=Q(status='INACTIVE'), distinct=True),
+            completed=Count('id', filter=Q(status='COMPLETED'), distinct=True),
+        )
+
         if branch_id:
             try:
-                from branches.models import Branch
-                branch = Branch.objects.get(pk=branch_id)
-                branch_name = branch.name
-            except Branch.DoesNotExist:
+                branch = Branch.objects.filter(id=branch_id).first()
+                if branch:
+                    stats['branch_name'] = branch.name
+            except Exception:
                 pass
-        
-        return Response({
-            'total': total,
-            'active': active,
-            'inactive': inactive,
-            'completed': completed,
-            'closed': closed,
-            'branch_id': branch_id,
-            'branch_name': branch_name,
-        })
-    
-    def get_object(self):
-        """
-        Override to support both numeric ID and job_number lookup.
-        Allows URLs like /projects/20-1051 (job_number) or /projects/123 (numeric ID).
-        Handles URL-encoded job numbers like "43048%20MS" -> "43048 MS"
-        """
-        from urllib.parse import unquote
-        from django.http import Http404
-        
-        lookup_url_kwarg = 'id'
-        lookup_value = self.kwargs.get(lookup_url_kwarg)
-        
-        if not lookup_value:
-            return super().get_object()
-        
-        queryset = self.get_queryset()
-        
-        # Decode URL-encoded values (e.g., "43048%20MS" -> "43048 MS")
-        # Handle both single and double encoding
-        decoded_value = unquote(unquote(str(lookup_value)))
-        
-        # Try to get by job_number first (if it contains non-digit characters like "20-1051" or spaces)
-        # Check if it's not a pure numeric ID
-        is_pure_numeric = decoded_value.isdigit() and '-' not in decoded_value and ' ' not in decoded_value
-        
-        if not is_pure_numeric:
-            # Try exact match with decoded value first
-            try:
-                return queryset.get(job_number=decoded_value)
-            except Project.DoesNotExist:
-                pass
-            
-            # Try with original lookup value (in case it wasn't URL-encoded)
-            try:
-                return queryset.get(job_number=lookup_value)
-            except Project.DoesNotExist:
-                pass
-            
-            # Try case-insensitive lookup
-            try:
-                return queryset.get(job_number__iexact=decoded_value)
-            except (Project.DoesNotExist, Project.MultipleObjectsReturned):
-                pass
-            
-            # Try with trimmed spaces (in case of extra whitespace)
-            try:
-                trimmed_value = decoded_value.strip()
-                if trimmed_value != decoded_value:
-                    return queryset.get(job_number=trimmed_value)
-            except Project.DoesNotExist:
-                pass
-        
-        # Try numeric ID lookup
-        try:
-            if decoded_value.isdigit():
-                return queryset.get(pk=int(decoded_value))
-        except (ValueError, Project.DoesNotExist):
-            pass
-        
-        # If all lookups fail, raise 404
-        raise Http404(f"No Project matches the given query: {lookup_value}")
-    
-    def get_queryset(self):
-        """Filter projects based on user role and division assignments."""
-        user = self.request.user
-        queryset = super().get_queryset()
-        
-        # Root Superadmin and Admin can see all projects
-        if user.role in ['ROOT_SUPERADMIN', 'ADMIN']:
-            # No filtering - see all projects
-            pass
-        
-        # Branch Managers can only see projects in their division
-        elif user.role == 'BRANCH_MANAGER':
-            if user.division:
-                queryset = queryset.filter(branch=user.division)
-            else:
-                # No division assigned - return empty queryset
-                queryset = queryset.none()
-        
-        # Project Managers can see their assigned projects
-        elif user.role == 'PROJECT_MANAGER':
-            queryset = queryset.filter(project_manager=user)
-        
-        # Default: no projects (shouldn't happen with new role system)
-        else:
-            queryset = queryset.none()
-        
-        return queryset
-    
-    def perform_create(self, serializer):
-        # Get scopes data from request
-        scopes_data = self.request.data.get('scopes', [])
-        
-        # Create project
-        project = serializer.save(created_by=self.request.user)
-        if not project.job_number:
-            project.job_number = generate_job_number(project.branch)
-            project.save()
-        
-        # Create scopes if provided
-        if scopes_data:
-            for scope_data in scopes_data:
-                # Only create scope if scope_type is provided
-                if scope_data.get('scope_type'):
-                    ProjectScope.objects.create(
-                        project=project,
-                        scope_type=scope_data.get('scope_type'),
-                        quantity=scope_data.get('quantity', 0) or 0,
-                        unit=scope_data.get('unit', 'Sq.Ft'),
-                        start_date=scope_data.get('start_date') or None,
-                        end_date=scope_data.get('end_date') or None,
-                        description=scope_data.get('description', '') or ''
-                    )
-        
-        # Log the creation
-        log_action(
-            user=self.request.user,
-            action='CREATE',
-            obj=project,
-            reason=f"Created project {project.job_number}",
-            request=self.request
-        )
-        
-        # Send notifications to assigned team members
-        self._notify_project_assignments(project, is_new=True)
-    
-    def perform_update(self, serializer):
-        # Get scopes data from request
-        scopes_data = self.request.data.get('scopes', None)
-        
-        # Store old assignments to detect changes
-        project = serializer.instance
-        old_pm = project.project_manager_id if project else None
-        old_super = project.superintendent_id if project else None
-        old_foreman = project.foreman_id if project else None
-        old_gc = project.general_contractor_id if project else None
-        
-        # Update project
-        project = serializer.save()
-        
-        # Update scopes if provided
-        if scopes_data is not None:
-            # Delete existing scopes and create new ones
-            project.scopes.all().delete()
-            for scope_data in scopes_data:
-                # Only create scope if scope_type is provided
-                if scope_data.get('scope_type'):
-                    ProjectScope.objects.create(
-                        project=project,
-                        scope_type=scope_data.get('scope_type'),
-                        quantity=scope_data.get('quantity', 0) or 0,
-                        unit=scope_data.get('unit', 'Sq.Ft'),
-                        start_date=scope_data.get('start_date') or None,
-                        end_date=scope_data.get('end_date') or None,
-                        description=scope_data.get('description', '') or ''
-                    )
-        
-        # Check if assignments changed and notify only newly assigned users
-        if (old_pm != project.project_manager_id or 
-            old_super != project.superintendent_id or 
-            old_foreman != project.foreman_id or
-            old_gc != project.general_contractor_id):
-            self._notify_project_assignments(project, is_new=False, 
-                                            old_pm=old_pm, old_super=old_super, 
-                                            old_foreman=old_foreman, old_gc=old_gc)
-    
-    def _notify_project_assignments(self, project, is_new=True, old_pm=None, old_super=None, old_foreman=None, old_gc=None):
-        """Send notifications to assigned team members."""
-        from accounts.models import Notification, User
-        from django.core.mail import send_mail
-        from django.template.loader import render_to_string
-        from django.conf import settings
-        
-        assigned_users = []
-        
-        # If it's an update, only notify newly assigned users
-        if not is_new:
-            if project.project_manager_id and project.project_manager_id != old_pm:
-                assigned_users.append(project.project_manager)
-            if project.superintendent_id and project.superintendent_id != old_super:
-                assigned_users.append(project.superintendent)
-            if project.foreman_id and project.foreman_id != old_foreman:
-                assigned_users.append(project.foreman)
-            if project.general_contractor_id and project.general_contractor_id != old_gc:
-                assigned_users.append(project.general_contractor)
-        else:
-            # For new projects, notify all assigned users
-            if project.project_manager:
-                assigned_users.append(project.project_manager)
-            if project.superintendent:
-                assigned_users.append(project.superintendent)
-            if project.foreman:
-                assigned_users.append(project.foreman)
-            if project.general_contractor:
-                assigned_users.append(project.general_contractor)
-        
-        # Remove duplicates
-        assigned_users = list(set(assigned_users))
-        
-        # Send notifications
-        for user in assigned_users:
-            # Create in-app notification
-            Notification.objects.create(
-                user=user,
-                type='PROJECT_UPDATE',
-                title=f'Project Assignment: {project.name}',
-                message=f'You have been {"assigned to" if is_new else "updated on"} project {project.job_number} - {project.name}',
-                link=f'/projects/{project.id}'
-            )
-            
-            # Send email notification
-            try:
-                subject = f'Project Assignment: {project.name}'
-                context = {
-                    'user': user,
-                    'project': project,
-                    'is_new': is_new,
-                    'project_url': f"{settings.FRONTEND_URL or 'http://localhost:3000'}/projects/{project.id}",
-                    'login_url': f"{settings.FRONTEND_URL or 'http://localhost:3000'}/login",
-                }
-                
-                html_message = render_to_string('accounts/emails/project_assignment.html', context)
-                plain_message = render_to_string('accounts/emails/project_assignment.txt', context)
-                
-                send_mail(
-                    subject=subject,
-                    message=plain_message,
-                    from_email=settings.DEFAULT_FROM_EMAIL or 'noreply@bsm.com',
-                    recipient_list=[user.email],
-                    html_message=html_message,
-                    fail_silently=False,
-                )
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Failed to send project assignment email to {user.email}: {e}", exc_info=True)
-    
-    @action(detail=True, methods=['get'])
-    def schedule_status(self, request, pk=None):
-        """Get detailed schedule status (Green/Yellow/Red)."""
-        project = self.get_object()
-        status, forecast_date, days_late = project.get_schedule_status()
-        return Response({
-            'status': status,
-            'forecast_date': forecast_date,
-            'days_late': days_late,
-            'baseline_date': project.estimated_end_date,
-        })
 
-
+        return Response(stats)
 class ProjectScopeViewSet(viewsets.ModelViewSet):
     queryset = ProjectScope.objects.all()
     serializer_class = ProjectScopeSerializer
@@ -1074,7 +888,7 @@ class PublicProjectListView(generics.ListAPIView):
     def get_queryset(self):
         # Return ALL public projects (with or without PIN)
         # The frontend will handle PIN entry when user clicks on PIN-protected projects
-        queryset = Project.objects.filter(is_public=True)
+        queryset = _annotated_projects_queryset(include_scopes=False).filter(is_public=True)
         
         # Filter by PIN if provided (for filtering the list by a specific PIN)
         pin = self.request.query_params.get('pin', None)
@@ -1126,7 +940,7 @@ class BranchPortalProjectListView(generics.ListAPIView):
     """
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
-    pagination_class = None  # Disable pagination to return all projects
+    pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         division_code = self.kwargs.get('division_code')
@@ -1184,7 +998,7 @@ class HQPortalProjectListView(generics.ListAPIView):
     """
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
-    pagination_class = None  # Disable pagination to return all projects
+    pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         password = self.request.query_params.get('password', '').strip()
