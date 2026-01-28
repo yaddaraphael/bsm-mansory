@@ -7,6 +7,7 @@ from accounts.models import User
 from branches.models import Branch
 
 
+# Legacy choices - now using ScopeType model for dynamic management
 SCOPE_OF_WORK_CHOICES = [
     ('CMU', 'CMU'),
     ('BRICK', 'BRICK'),
@@ -17,6 +18,46 @@ SCOPE_OF_WORK_CHOICES = [
     ('THIN_BRICK', 'THIN BRICK'),
     ('FBD_STONE', 'FBD STONE'),
 ]
+
+
+class ScopeType(models.Model):
+    """
+    Dynamic scope types that can be managed by admins.
+    Default types: CMU, BRICK, CASTSTONE, MSV, STUCCO, EIFS, THIN BRICK, FBD STONE
+    """
+    code = models.CharField(max_length=50, unique=True, help_text="Scope code (e.g., CMU, BRICK)")
+    name = models.CharField(max_length=100, help_text="Display name (e.g., CMU, BRICK, CAST STONE)")
+    is_active = models.BooleanField(default=True, help_text="Whether this scope type is active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Scope Type'
+        verbose_name_plural = 'Scope Types'
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
+class Foreman(models.Model):
+    """
+    Dynamic foremen list that can be managed by admins.
+    Default foremen: adam, enoch, eric, hugo, jose s, joel, manuel, mike, neftali, 
+    sergio, steve, victor c, victor m, vidal, silva, sub-neti, sub-rick, tbd
+    """
+    name = models.CharField(max_length=100, unique=True, help_text="Foreman name")
+    is_active = models.BooleanField(default=True, help_text="Whether this foreman is active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Foreman'
+        verbose_name_plural = 'Foremen'
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
 
 
 class Project(models.Model):
@@ -178,7 +219,7 @@ class Project(models.Model):
     @property
     def total_quantity(self):
         """Total quantity across all scopes."""
-        return self.scopes.aggregate(total=Sum('quantity'))['total'] or 0
+        return self.scopes.aggregate(total=Sum('qty_sq_ft'))['total'] or 0
     
     @property
     def total_installed(self):
@@ -315,16 +356,53 @@ class Project(models.Model):
 
 class ProjectScope(models.Model):
     """
-    Scope of work for a project.
+    Scope of work for a project - tracks progress, dates, and resources.
     """
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='scopes')
-    scope_type = models.CharField(max_length=50, choices=SCOPE_OF_WORK_CHOICES)
-    description = models.TextField(null=True, blank=True)
-    quantity = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    installed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    unit = models.CharField(max_length=20, default='Sq.Ft', help_text="Unit of measurement")
-    start_date = models.DateField(null=True, blank=True, help_text="Start date for this scope")
-    end_date = models.DateField(null=True, blank=True, help_text="End date for this scope")
+    scope_type = models.ForeignKey(
+        ScopeType,
+        on_delete=models.PROTECT,
+        related_name='project_scopes',
+        help_text="Type of scope (CMU, BRICK, etc.)"
+    )
+    description = models.TextField(null=True, blank=True, help_text="Description of this scope")
+    
+    # Dates
+    estimation_start_date = models.DateField(null=True, blank=True, help_text="Estimated start date for this scope")
+    estimation_end_date = models.DateField(null=True, blank=True, help_text="Estimated end date for this scope")
+    duration_days = models.IntegerField(null=True, blank=True, help_text="Duration in days (when set, can change estimation_end_date)")
+    
+    # Work schedule
+    saturdays = models.BooleanField(default=False, help_text="Include Saturdays as workdays")
+    full_weekends = models.BooleanField(default=False, help_text="Include full weekends as workdays")
+    
+    # Quantities
+    qty_sq_ft = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Quantity per square foot"
+    )
+    installed = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Installed quantity (updated during meetings)"
+    )
+    
+    # Resources
+    foreman = models.ForeignKey(
+        Foreman,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='project_scopes',
+        help_text="Foreman/screw assigned to this scope"
+    )
+    masons = models.IntegerField(default=0, help_text="Number of masons")
+    tenders = models.IntegerField(default=0, help_text="Number of tenders")
+    operators = models.IntegerField(default=0, help_text="Number of operators")
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -332,21 +410,59 @@ class ProjectScope(models.Model):
         verbose_name = 'Project Scope'
         verbose_name_plural = 'Project Scopes'
         unique_together = [['project', 'scope_type']]
+        ordering = ['scope_type__name']
     
     def __str__(self):
-        return f"{self.project.job_number} - {self.get_scope_type_display()}"
+        return f"{self.project.job_number} - {self.scope_type.name}"
+    
+    def save(self, *args, **kwargs):
+        """Override save to calculate estimation_end_date from duration_days if set."""
+        if self.duration_days and self.estimation_start_date:
+            from datetime import timedelta
+            # Calculate workdays
+            current_date = self.estimation_start_date
+            workdays = 0
+            days_added = 0
+            
+            while workdays < self.duration_days:
+                weekday = current_date.weekday()  # 0=Monday, 6=Sunday
+                
+                # Check if it's a workday
+                is_workday = False
+                if weekday < 5:  # Monday-Friday
+                    is_workday = True
+                elif weekday == 5 and self.saturdays:  # Saturday
+                    is_workday = True
+                elif weekday == 6 and self.full_weekends:  # Sunday
+                    is_workday = True
+                
+                if is_workday:
+                    workdays += 1
+                
+                if workdays < self.duration_days:
+                    current_date += timedelta(days=1)
+                    days_added += 1
+            
+            self.estimation_end_date = current_date
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def quantity(self):
+        """Total quantity (alias for qty_sq_ft for backward compatibility)."""
+        return self.qty_sq_ft
     
     @property
     def remaining(self):
         """Remaining quantity for this scope."""
-        return max(self.quantity - self.installed, 0)
+        return max(self.qty_sq_ft - self.installed, 0)
     
     @property
     def percent_complete(self):
         """Percentage complete for this scope."""
-        if self.quantity == 0:
+        if self.qty_sq_ft == 0:
             return 0
-        return (self.installed / self.quantity) * 100
+        return float((self.installed / self.qty_sq_ft) * 100)
 
 
 class LaborEntry(models.Model):

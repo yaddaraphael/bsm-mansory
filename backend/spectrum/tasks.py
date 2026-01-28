@@ -1,9 +1,10 @@
 """
 Celery tasks for Spectrum integration.
 """
-from celery import shared_task
-from django.core.management import call_command
 import logging
+from celery import shared_task
+from spectrum.sync_engine import run_spectrum_sync
+from spectrum.models import SpectrumSyncRun
 
 logger = logging.getLogger(__name__)
 
@@ -11,13 +12,12 @@ logger = logging.getLogger(__name__)
 @shared_task
 def sync_spectrum_jobs_task():
     """
-    Periodic task to sync jobs from Spectrum API.
-    Runs every hour.
+    Periodic task to sync Spectrum data.
     """
     try:
-        logger.info("Starting automatic Spectrum job sync...")
-        call_command('sync_spectrum_jobs')
-        logger.info("Automatic Spectrum job sync completed successfully")
+        logger.info("Starting automatic Spectrum sync...")
+        run_spectrum_sync(run_type=SpectrumSyncRun.RUN_AUTO)
+        logger.info("Automatic Spectrum sync completed successfully")
     except Exception as e:
-        logger.error(f"Error in automatic Spectrum job sync: {e}", exc_info=True)
+        logger.error(f"Error in automatic Spectrum sync: {e}", exc_info=True)
         raise

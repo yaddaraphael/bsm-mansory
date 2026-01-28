@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from datetime import datetime
 from accounts.models import User
 from projects.models import Project
 from branches.models import Branch
@@ -11,6 +12,11 @@ class Meeting(models.Model):
     Meetings are created by admins/superadmins to review active jobs.
     """
     meeting_date = models.DateField(help_text="Date of the meeting")
+    week_number = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Week number of the year (1-53) calculated from meeting_date"
+    )
     created_by = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
@@ -42,6 +48,20 @@ class Meeting(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    def calculate_week_number(self, date):
+        """Calculate ISO week number (1-53) from a date."""
+        if date is None:
+            return None
+        # Use ISO calendar to get week number
+        iso_calendar = date.isocalendar()
+        return iso_calendar[1]  # Returns week number (1-53)
+    
+    def save(self, *args, **kwargs):
+        """Override save to calculate week_number from meeting_date."""
+        if self.meeting_date:
+            self.week_number = self.calculate_week_number(self.meeting_date)
+        super().save(*args, **kwargs)
     
     class Meta:
         ordering = ['-meeting_date', '-created_at']

@@ -11,54 +11,58 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { useAuth } from '@/hooks/useAuth';
 import { useBranches } from '@/hooks/useBranches';
 import { useProject } from '@/hooks/useProjects';
+import { useSidebar } from '@/components/layout/SidebarContext';
 import api from '@/lib/api';
 import { useRouter } from 'next/navigation';
+import { PlusIcon } from '@heroicons/react/24/outline';
 
-interface User {
-  id: number;
-  first_name: string;
-  last_name: string;
-  username: string;
-  email: string;
-  role: string;
-}
 
 export default function EditProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { user } = useAuth();
+  const { isCollapsed } = useSidebar();
   const { project, loading: projectLoading } = useProject(id);
   const { branches, loading: branchesLoading } = useBranches({ status: 'ACTIVE' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState(false);
-  const [projectManagers, setProjectManagers] = useState<User[]>([]);
-  const [superintendents, setSuperintendents] = useState<User[]>([]);
-  const [generalContractors, setGeneralContractors] = useState<User[]>([]);
-  const [foremen, setForemen] = useState<User[]>([]);
+  const [comprehensiveData, setComprehensiveData] = useState<{
+    phases?: Array<{
+      phase_code: string;
+      cost_type: string;
+      description: string;
+      status_code: string;
+      [key: string]: unknown;
+    }>;
+  } | null>(null);
+  const [loadingComprehensive, setLoadingComprehensive] = useState(false);
+  const [scopeTypes, setScopeTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
+  const [foremen, setForemen] = useState<Array<{ id: number; name: string }>>([]);
   const [scopes, setScopes] = useState<Array<{
     id?: number;
-    scope_type: string;
-    quantity: string;
-    unit: string;
-    start_date: string;
-    end_date: string;
+    scope_type_id: number;
     description: string;
+    estimation_start_date: string;
+    estimation_end_date: string;
+    duration_days: string;
+    saturdays: boolean;
+    full_weekends: boolean;
+    qty_sq_ft: string;
+    foreman_id: string;
+    masons: string;
+    tenders: string;
+    operators: string;
   }>>([]);
+  const [editingScopeIndex, setEditingScopeIndex] = useState<number | null>(null);
+  const [showAddScope, setShowAddScope] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     branch: '',
-    general_contractor: '',
-    project_manager: '',
-    superintendent: '',
-    foreman: '',
-    qty_sq: '',
     start_date: '',
     duration: '',
     saturdays: false,
     full_weekends: false,
-    contract_value: '',
-    contract_balance: '',
     status: 'PENDING',
     is_public: false,
     public_pin: '',
@@ -70,27 +74,45 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
   const isCompletedFromSystem = project?.status === 'COMPLETED' || project?.spectrum_status_code === 'C';
   const isReadOnly = isCompletedFromSystem || !canEdit;
 
+
+  // Fetch comprehensive Spectrum data for phases (for reference only)
   useEffect(() => {
-    // Fetch users by role
-    const fetchUsers = async () => {
+    const fetchComprehensiveData = async () => {
+      if (!project?.job_number) return;
+      
+      setLoadingComprehensive(true);
       try {
-        const [pmRes, superRes, gcRes, foremanRes] = await Promise.all([
-          api.get('/auth/users/?role=PROJECT_MANAGER'),
-          api.get('/auth/users/?role=SUPERINTENDENT'),
-          api.get('/auth/users/?role=GENERAL_CONTRACTOR'),
-          api.get('/auth/users/?role=FOREMAN'),
-        ]);
-        
-        setProjectManagers(pmRes.data.results || pmRes.data || []);
-        setSuperintendents(superRes.data.results || superRes.data || []);
-        setGeneralContractors(gcRes.data.results || gcRes.data || []);
-        setForemen(foremanRes.data.results || foremanRes.data || []);
-      } catch (err) {
-        console.error('Failed to fetch users:', err);
+        const encodedJobNumber = encodeURIComponent(project.job_number);
+        const response = await api.get(`/spectrum/projects/${encodedJobNumber}/comprehensive/`);
+        setComprehensiveData(response.data);
+      } catch {
+        console.log('Comprehensive Spectrum data not available for this project');
+      } finally {
+        setLoadingComprehensive(false);
       }
     };
     
-    fetchUsers();
+    if (project) {
+      fetchComprehensiveData();
+    }
+  }, [project]);
+
+  // Fetch scope types and foremen
+  useEffect(() => {
+    const fetchScopeTypesAndForemen = async () => {
+      try {
+        const [scopeTypesRes, foremenRes] = await Promise.all([
+          api.get('/projects/scope-types/'),
+          api.get('/projects/foremen/')
+        ]);
+        setScopeTypes(scopeTypesRes.data.results || scopeTypesRes.data || []);
+        setForemen(foremenRes.data.results || foremenRes.data || []);
+      } catch (err) {
+        console.error('Failed to fetch scope types or foremen:', err);
+      }
+    };
+    
+    fetchScopeTypesAndForemen();
   }, []);
 
   // Populate form when project loads
@@ -99,44 +121,16 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
       setFormData({
         name: project.name || '',
         branch: project.branch?.toString() || '',
-        general_contractor: project.general_contractor?.toString() || '',
-        project_manager: project.project_manager?.toString() || '',
-        superintendent: project.superintendent?.toString() || '',
-        foreman: project.foreman?.toString() || '',
-        qty_sq: project.qty_sq?.toString() || '',
         start_date: project.start_date ? new Date(project.start_date).toISOString().split('T')[0] : '',
         duration: project.duration?.toString() || '',
         saturdays: project.saturdays || false,
         full_weekends: project.full_weekends || false,
-        contract_value: project.contract_value?.toString() || '',
-        contract_balance: project.contract_balance?.toString() || '',
         status: project.status || 'PENDING',
         is_public: project.is_public || false,
         public_pin: project.public_pin || '',
         notes: project.notes || '',
       });
       
-      // Populate scopes
-      if (project.scopes && project.scopes.length > 0) {
-        interface Scope {
-          id: number;
-          scope_type?: string;
-          quantity?: number;
-          unit?: string;
-          start_date?: string;
-          end_date?: string;
-          description?: string;
-        }
-        setScopes(project.scopes.map((scope: Scope) => ({
-          id: scope.id,
-          scope_type: scope.scope_type || '',
-          quantity: scope.quantity?.toString() || '',
-          unit: scope.unit || 'Sq.Ft',
-          start_date: scope.start_date ? new Date(scope.start_date).toISOString().split('T')[0] : '',
-          end_date: scope.end_date ? new Date(scope.end_date).toISOString().split('T')[0] : '',
-          description: scope.description || '',
-        })));
-      }
     }
   }, [project]);
 
@@ -145,7 +139,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
       <ProtectedRoute>
         <div className="flex min-h-screen">
           <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+          <div className="flex-1 flex flex-col min-w-0 sidebar-content">
             <Header />
             <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <Card>
@@ -165,7 +159,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
       <ProtectedRoute>
         <div className="flex min-h-screen">
           <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+          <div className="flex-1 flex flex-col min-w-0 sidebar-content">
             <Header />
             <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <LoadingSpinner />
@@ -208,9 +202,6 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
         project_manager?: number;
         superintendent?: number;
         foreman?: number;
-        qty_sq?: number;
-        contract_value?: number;
-        contract_balance?: number;
         public_pin?: string;
         scopes?: Array<{
           scope_type: string;
@@ -220,6 +211,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
           end_date?: string | null;
           description: string;
         }>;
+        phase_quantities?: Record<string, number>;
       }
 
       const payload: ProjectPayload = {
@@ -234,28 +226,54 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
         notes: formData.notes,
       };
 
-      if (formData.general_contractor) payload.general_contractor = parseInt(formData.general_contractor);
-      if (formData.project_manager) payload.project_manager = parseInt(formData.project_manager);
-      if (formData.superintendent) payload.superintendent = parseInt(formData.superintendent);
-      if (formData.foreman) payload.foreman = parseInt(formData.foreman);
-      if (formData.qty_sq) payload.qty_sq = parseFloat(formData.qty_sq);
-      if (formData.contract_value) payload.contract_value = parseFloat(formData.contract_value);
-      if (formData.contract_balance) payload.contract_balance = parseFloat(formData.contract_balance);
       if (formData.public_pin) payload.public_pin = formData.public_pin;
       
-      // Add scopes if any
-      if (scopes.length > 0) {
-        payload.scopes = scopes.map(scope => ({
-          scope_type: scope.scope_type,
-          quantity: parseFloat(scope.quantity) || 0,
-          unit: scope.unit || 'Sq.Ft',
-          start_date: scope.start_date || null,
-          end_date: scope.end_date || null,
-          description: scope.description || '',
-        }));
-      }
+      // Save scopes separately via API
+      // We'll handle scopes in a separate API call after project update
 
       await api.patch(`/projects/projects/${id}/`, payload);
+      
+      // Save/update scopes
+      if (scopes.length > 0) {
+        for (const scope of scopes) {
+          // Skip scopes without a valid scope_type_id
+          if (!scope.scope_type_id || scope.scope_type_id === 0) {
+            continue;
+          }
+          
+          const scopePayload: any = {
+            project: parseInt(id),
+            scope_type_id: scope.scope_type_id,
+            description: scope.description || '',
+            qty_sq_ft: parseFloat(scope.qty_sq_ft) || 0,
+            // Don't send masons, tenders, operators - these are controlled by meetings
+            saturdays: scope.saturdays,
+            full_weekends: scope.full_weekends,
+          };
+          
+          if (scope.estimation_start_date) {
+            scopePayload.estimation_start_date = scope.estimation_start_date;
+          }
+          if (scope.estimation_end_date) {
+            scopePayload.estimation_end_date = scope.estimation_end_date;
+          }
+          if (scope.duration_days) {
+            scopePayload.duration_days = parseInt(scope.duration_days);
+          }
+          if (scope.foreman_id) {
+            scopePayload.foreman_id = parseInt(scope.foreman_id);
+          }
+          
+          if (scope.id) {
+            // Update existing scope
+            await api.patch(`/projects/scopes/${scope.id}/`, scopePayload);
+          } else {
+            // Create new scope
+            await api.post('/projects/scopes/', scopePayload);
+          }
+        }
+      }
+      
       setSuccess(true);
       setTimeout(() => {
         router.push(`/projects/${id}`);
@@ -277,7 +295,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
     <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN']}>
       <div className="flex min-h-screen">
         <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
+        <div className="flex-1 flex flex-col min-w-0 sidebar-content">
           <Header />
           <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
             <div className="mb-4 md:mb-6">
@@ -301,7 +319,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
               </Card>
             )}
 
-            <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
+            <form onSubmit={handleSubmit} className="max-w-3xl mx-auto w-full px-2 sm:px-4">
               <div className="space-y-4 md:space-y-6">
                 <Card title="Basic Information">
                   <div className="space-y-4">
@@ -416,243 +434,376 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                   </div>
                 </Card>
 
-                <Card title="Assignments">
+
+                <Card title="Project Scopes">
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Project Manager</label>
-                      <select
-                        value={formData.project_manager}
-                        onChange={(e) => setFormData({ ...formData, project_manager: e.target.value })}
-                        className="input-field"
-                        disabled={isReadOnly}
-                      >
-                        <option value="">Select project manager</option>
-                        {projectManagers.map((pm) => (
-                          <option key={pm.id} value={pm.id}>
-                            {pm.first_name} {pm.last_name} ({pm.email})
-                          </option>
-                        ))}
-                      </select>
+                    <div className="flex justify-between items-center mb-4">
+                      <p className="text-sm text-gray-600">
+                        Manage scopes for this project. Scopes track progress, dates, and resources.
+                      </p>
+                      {!isReadOnly && (
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            setScopes([...scopes, {
+                              scope_type_id: 0,
+                              description: '',
+                              estimation_start_date: '',
+                              estimation_end_date: '',
+                              duration_days: '',
+                              saturdays: false,
+                              full_weekends: false,
+                              qty_sq_ft: '',
+                              foreman_id: '',
+                              masons: '',
+                              tenders: '',
+                              operators: '',
+                            }]);
+                            setEditingScopeIndex(scopes.length);
+                            setShowAddScope(true);
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <PlusIcon className="h-5 w-5" />
+                          Add Scope
+                        </Button>
+                      )}
                     </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Superintendent</label>
-                      <select
-                        value={formData.superintendent}
-                        onChange={(e) => setFormData({ ...formData, superintendent: e.target.value })}
-                        className="input-field"
-                        disabled={isReadOnly}
-                      >
-                        <option value="">Select superintendent</option>
-                        {superintendents.map((superintendent) => (
-                          <option key={superintendent.id} value={superintendent.id}>
-                            {superintendent.first_name} {superintendent.last_name} ({superintendent.email})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">General Contractor</label>
-                      <select
-                        value={formData.general_contractor}
-                        onChange={(e) => setFormData({ ...formData, general_contractor: e.target.value })}
-                        className="input-field"
-                        disabled={isReadOnly}
-                      >
-                        <option value="">Select general contractor</option>
-                        {generalContractors.map((gc) => (
-                          <option key={gc.id} value={gc.id}>
-                            {gc.first_name} {gc.last_name} ({gc.email})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Foreman (Optional)</label>
-                      <select
-                        value={formData.foreman}
-                        onChange={(e) => setFormData({ ...formData, foreman: e.target.value })}
-                        className="input-field"
-                        disabled={isReadOnly}
-                      >
-                        <option value="">Select foreman (optional)</option>
-                        {foremen.map((foreman) => (
-                          <option key={foreman.id} value={foreman.id}>
-                            {foreman.first_name} {foreman.last_name} ({foreman.email})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </Card>
-
-                <Card title="Quantity & Financial">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <Input
-                      label="Qty/Sq"
-                      type="number"
-                      step="0.01"
-                      value={formData.qty_sq}
-                      onChange={(e) => setFormData({ ...formData, qty_sq: e.target.value })}
-                      placeholder="0.00"
-                      helpText="Quantity per square foot"
-                      disabled={isReadOnly}
-                    />
-                    <Input
-                      label="Contract Value"
-                      type="number"
-                      step="0.01"
-                      value={formData.contract_value}
-                      onChange={(e) => setFormData({ ...formData, contract_value: e.target.value })}
-                      placeholder="0.00"
-                      disabled={isReadOnly}
-                    />
-                    <Input
-                      label="Contract Balance"
-                      type="number"
-                      step="0.01"
-                      value={formData.contract_balance}
-                      onChange={(e) => setFormData({ ...formData, contract_balance: e.target.value })}
-                      placeholder="0.00"
-                      disabled={isReadOnly}
-                    />
-                  </div>
-                </Card>
-
-                <Card title="Scope of Work">
-                  <div className="space-y-4">
-                    <p className="text-sm text-gray-600">
-                      Add one or more scopes of work. Each scope can have its own start and end date.
-                    </p>
-                    {scopes.map((scope, index) => (
-                      <div key={index} className="p-4 border rounded-lg bg-gray-50">
-                        <div className="flex justify-between items-center mb-3">
-                          <h4 className="font-medium text-gray-900">Scope {index + 1}</h4>
-                          {!isReadOnly && (
-                            <button
-                              type="button"
-                              onClick={() => setScopes(scopes.filter((_, i) => i !== index))}
-                              className="text-red-600 hover:text-red-800 text-sm"
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Scope Type *</label>
-                            <select
-                              value={scope.scope_type}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].scope_type = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              className="input-field"
-                              required
-                              disabled={isReadOnly}
-                            >
-                              <option value="">Select scope type</option>
-                              <option value="CMU">CMU</option>
-                              <option value="BRICK">BRICK</option>
-                              <option value="CAST_STONE">CAST STONE</option>
-                              <option value="MSV">MSV</option>
-                              <option value="STUCCO">STUCCO</option>
-                              <option value="EIFS">EIFS</option>
-                              <option value="THIN_BRICK">THIN BRICK</option>
-                              <option value="FBD_STONE">FBD STONE</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Quantity *</label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={scope.quantity}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].quantity = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              placeholder="0.00"
-                              required
-                              disabled={isReadOnly}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Unit</label>
-                            <Input
-                              value={scope.unit}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].unit = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              placeholder="Sq.Ft"
-                              disabled={isReadOnly}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
-                            <Input
-                              type="date"
-                              value={scope.start_date}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].start_date = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              disabled={isReadOnly}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
-                            <Input
-                              type="date"
-                              value={scope.end_date}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].end_date = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              disabled={isReadOnly}
-                            />
-                          </div>
-                          <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                            <textarea
-                              value={scope.description}
-                              onChange={(e) => {
-                                const newScopes = [...scopes];
-                                newScopes[index].description = e.target.value;
-                                setScopes(newScopes);
-                              }}
-                              className="input-field"
-                              rows={2}
-                              placeholder="Additional description for this scope..."
-                              disabled={isReadOnly}
-                            />
-                          </div>
-                        </div>
+                    
+                    {scopes.length > 0 ? (
+                      <div className="space-y-4">
+                        {scopes.map((scope, idx) => {
+                          const isEditing = editingScopeIndex === idx;
+                          const scopeType = scopeTypes.find(st => st.id === scope.scope_type_id);
+                          
+                          return (
+                            <div key={idx} className="p-4 border border-gray-200 rounded-lg bg-white">
+                              <div className="flex justify-between items-center mb-4">
+                                <h4 className="font-semibold text-gray-900">
+                                  {scopeType ? scopeType.name : 'New Scope'}
+                                </h4>
+                                {!isReadOnly && (
+                                  <div className="flex gap-2">
+                                    {isEditing ? (
+                                      <>
+                                        <Button
+                                          variant="primary"
+                                          size="sm"
+                                          onClick={() => setEditingScopeIndex(null)}
+                                        >
+                                          Done
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Button
+                                          variant="secondary"
+                                          size="sm"
+                                          onClick={() => setEditingScopeIndex(idx)}
+                                        >
+                                          Edit
+                                        </Button>
+                                        <Button
+                                          variant="danger"
+                                          size="sm"
+                                          onClick={async () => {
+                                            if (scope.id) {
+                                              try {
+                                                await api.delete(`/projects/scopes/${scope.id}/`);
+                                              } catch (err) {
+                                                console.error('Failed to delete scope:', err);
+                                              }
+                                            }
+                                            setScopes(scopes.filter((_, i) => i !== idx));
+                                          }}
+                                        >
+                                          Delete
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {isEditing ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Scope Type *</label>
+                                    <select
+                                      value={scope.scope_type_id}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].scope_type_id = parseInt(e.target.value);
+                                        setScopes(updated);
+                                      }}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      required
+                                      disabled={isReadOnly}
+                                    >
+                                      <option value="0">Select Scope Type</option>
+                                      {scopeTypes.map((st) => (
+                                        <option key={st.id} value={st.id}>{st.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Foreman</label>
+                                    <select
+                                      value={scope.foreman_id}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].foreman_id = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      disabled={isReadOnly}
+                                    >
+                                      <option value="">No Foreman</option>
+                                      {foremen.map((f) => (
+                                        <option key={f.id} value={f.id}>{f.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                                    <textarea
+                                      value={scope.description}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].description = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      rows={2}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Estimation Start Date</label>
+                                    <Input
+                                      type="date"
+                                      value={scope.estimation_start_date}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].estimation_start_date = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Estimation End Date</label>
+                                    <Input
+                                      type="date"
+                                      value={scope.estimation_end_date}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].estimation_end_date = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration (Days)</label>
+                                    <Input
+                                      type="number"
+                                      value={scope.duration_days}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].duration_days = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      min="0"
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-4">
+                                    <label className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={scope.saturdays}
+                                        onChange={(e) => {
+                                          const updated = [...scopes];
+                                          updated[idx].saturdays = e.target.checked;
+                                          setScopes(updated);
+                                        }}
+                                        disabled={isReadOnly}
+                                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                                      />
+                                      <span className="text-sm font-medium text-gray-700">Saturdays</span>
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={scope.full_weekends}
+                                        onChange={(e) => {
+                                          const updated = [...scopes];
+                                          updated[idx].full_weekends = e.target.checked;
+                                          setScopes(updated);
+                                        }}
+                                        disabled={isReadOnly}
+                                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                                      />
+                                      <span className="text-sm font-medium text-gray-700">Full Weekends</span>
+                                    </label>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Qty/sq.ft (Initial) *</label>
+                                    <Input
+                                      type="number"
+                                      value={scope.qty_sq_ft}
+                                      onChange={(e) => {
+                                        const updated = [...scopes];
+                                        updated[idx].qty_sq_ft = e.target.value;
+                                        setScopes(updated);
+                                      }}
+                                      step="0.01"
+                                      min="0"
+                                      required
+                                      disabled={isReadOnly}
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Initial quantity. Installed quantity will be updated from meetings.</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Masons <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.masons || '0'}
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                      min="0"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Tenders <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.tenders || '0'}
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                      min="0"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Operators <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.operators || '0'}
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                      min="0"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                                  {scope.description && (
+                                    <div>
+                                      <span className="text-gray-500">Description:</span>
+                                      <p className="font-medium text-gray-900">{scope.description}</p>
+                                    </div>
+                                  )}
+                                  {scope.estimation_start_date && (
+                                    <div>
+                                      <span className="text-gray-500">Start Date:</span>
+                                      <p className="font-medium text-gray-900">
+                                        {new Date(scope.estimation_start_date).toLocaleDateString()}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {scope.estimation_end_date && (
+                                    <div>
+                                      <span className="text-gray-500">End Date:</span>
+                                      <p className="font-medium text-gray-900">
+                                        {new Date(scope.estimation_end_date).toLocaleDateString()}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {scope.duration_days && (
+                                    <div>
+                                      <span className="text-gray-500">Duration:</span>
+                                      <p className="font-medium text-gray-900">{scope.duration_days} days</p>
+                                    </div>
+                                  )}
+                                  {scope.qty_sq_ft && (
+                                    <div>
+                                      <span className="text-gray-500">Qty/sq.ft:</span>
+                                      <p className="font-medium text-gray-900">{parseFloat(scope.qty_sq_ft).toLocaleString()}</p>
+                                    </div>
+                                  )}
+                                  {scope.foreman_id && (
+                                    <div>
+                                      <span className="text-gray-500">Foreman:</span>
+                                      <p className="font-medium text-gray-900">
+                                        {foremen.find(f => f.id === parseInt(scope.foreman_id))?.name || 'N/A'}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {(scope.masons || scope.tenders || scope.operators) && (
+                                    <div>
+                                      <span className="text-gray-500">Resources:</span>
+                                      <p className="font-medium text-gray-900">
+                                        {scope.masons ? `${scope.masons} M` : ''}
+                                        {scope.masons && (scope.tenders || scope.operators) ? ', ' : ''}
+                                        {scope.tenders ? `${scope.tenders} T` : ''}
+                                        {scope.tenders && scope.operators ? ', ' : ''}
+                                        {scope.operators ? `${scope.operators} O` : ''}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {(scope.saturdays || scope.full_weekends) && (
+                                    <div>
+                                      <span className="text-gray-500">Schedule:</span>
+                                      <p className="font-medium text-gray-900">
+                                        {scope.saturdays && 'Saturdays '}
+                                        {scope.full_weekends && 'Full Weekends'}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
-                    {!isReadOnly && (
-                      <button
-                        type="button"
-                        onClick={() => setScopes([...scopes, {
-                          scope_type: '',
-                          quantity: '',
-                          unit: 'Sq.Ft',
-                          start_date: '',
-                          end_date: '',
-                          description: '',
-                        }])}
-                        className="w-full py-2 px-4 border border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-primary hover:text-primary transition-colors"
-                      >
-                        + Add Scope of Work
-                      </button>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-gray-500 mb-4">No scopes defined for this project</p>
+                        {!isReadOnly && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setScopes([{
+                                scope_type_id: 0,
+                                description: '',
+                                estimation_start_date: '',
+                                estimation_end_date: '',
+                                duration_days: '',
+                                saturdays: false,
+                                full_weekends: false,
+                                qty_sq_ft: '',
+                                foreman_id: '',
+                                masons: '',
+                                tenders: '',
+                                operators: '',
+                              }]);
+                              setEditingScopeIndex(0);
+                            }}
+                          >
+                            Add First Scope
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </Card>

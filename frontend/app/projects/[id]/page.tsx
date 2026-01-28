@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useSidebar } from '@/components/layout/SidebarContext';
 import api from '@/lib/api';
-import { PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { PencilIcon, TrashIcon, CheckIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import Input from '@/components/ui/Input';
 
 interface MeetingPhase {
@@ -26,17 +26,41 @@ interface MeetingPhase {
   updated_at?: string;
 }
 
+interface ScopeType {
+  id: number;
+  code: string;
+  name: string;
+  is_active: boolean;
+}
+
+interface Foreman {
+  id: number;
+  name: string;
+  is_active: boolean;
+}
+
 interface ProjectScope {
   id: number;
-  scope_type: string;
+  scope_type: number | ScopeType;
+  scope_type_id?: number;
+  scope_type_detail?: ScopeType;
   description?: string;
-  percent_complete?: number;
-  quantity?: number;
+  estimation_start_date?: string;
+  estimation_end_date?: string;
+  duration_days?: number;
+  saturdays?: boolean;
+  full_weekends?: boolean;
+  qty_sq_ft?: number;
+  quantity?: number; // Alias for qty_sq_ft
   installed?: number;
   remaining?: number;
-  unit?: string;
-  start_date?: string;
-  end_date?: string;
+  percent_complete?: number;
+  foreman?: number | Foreman | null;
+  foreman_id?: number;
+  foreman_detail?: Foreman;
+  masons?: number;
+  tenders?: number;
+  operators?: number;
   [key: string]: unknown;
 }
 
@@ -158,9 +182,13 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [comprehensiveData, setComprehensiveData] = useState<ComprehensiveProjectData | null>(null);
   const [loadingComprehensive, setLoadingComprehensive] = useState(false);
   const [editingScope, setEditingScope] = useState<number | null>(null);
-  const [scopeUpdates, setScopeUpdates] = useState<Record<number, { quantity?: number; installed?: number }>>({});
+  const [scopeUpdates, setScopeUpdates] = useState<Record<number, Partial<ProjectScope>>>({});
   const [savingScope, setSavingScope] = useState<number | null>(null);
   const [meetingPhases, setMeetingPhases] = useState<MeetingPhase[]>([]);
+  const [scopeTypes, setScopeTypes] = useState<ScopeType[]>([]);
+  const [foremen, setForemen] = useState<Foreman[]>([]);
+  const [showAddScopeModal, setShowAddScopeModal] = useState(false);
+  const [newScope, setNewScope] = useState<Partial<ProjectScope>>({});
   
   const canEditDelete = user?.role === 'ROOT_SUPERADMIN';
   const canEditPhases = ['ROOT_SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER'].includes(user?.role || '');
@@ -211,6 +239,24 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       fetchMeetingPhases();
     }
   }, [project]);
+
+  // Fetch scope types and foremen
+  useEffect(() => {
+    const fetchScopeTypesAndForemen = async () => {
+      try {
+        const [scopeTypesRes, foremenRes] = await Promise.all([
+          api.get('/projects/scope-types/'),
+          api.get('/projects/foremen/')
+        ]);
+        setScopeTypes(scopeTypesRes.data.results || scopeTypesRes.data || []);
+        setForemen(foremenRes.data.results || foremenRes.data || []);
+      } catch (err) {
+        console.error('Failed to fetch scope types or foremen:', err);
+      }
+    };
+    
+    fetchScopeTypesAndForemen();
+  }, []);
 
   // Handle responsive sidebar margin
   const [sidebarMargin, setSidebarMargin] = useState('0');
@@ -294,7 +340,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     if (!canEditPhases || isReadOnly) return;
     
     const updates = scopeUpdates[scopeId];
-    if (!updates || (!updates.quantity && !updates.installed)) {
+    if (!updates) {
       setEditingScope(null);
       setScopeUpdates({});
       return;
@@ -305,10 +351,15 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       const scope = project.scopes.find((s: ProjectScope) => s.id === scopeId);
       if (!scope) return;
 
-      const updatedData = {
-        ...scope,
-        quantity: updates.quantity !== undefined ? updates.quantity : scope.quantity,
-        installed: updates.installed !== undefined ? updates.installed : scope.installed,
+      const updatedData: Partial<ProjectScope> = {
+        ...updates,
+        scope_type_id: updates.scope_type_id !== undefined ? updates.scope_type_id : (typeof scope.scope_type === 'object' ? scope.scope_type.id : scope.scope_type),
+        foreman_id: updates.foreman_id !== undefined ? updates.foreman_id : (scope.foreman ? (typeof scope.foreman === 'object' ? scope.foreman.id : scope.foreman) : null),
+        // Don't update installed, masons, tenders, operators - these are controlled by meetings
+        installed: undefined,
+        masons: undefined,
+        tenders: undefined,
+        operators: undefined,
       };
 
       await api.patch(`/projects/scopes/${scopeId}/`, updatedData);
@@ -320,7 +371,115 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       setScopeUpdates({});
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };
-      alert(error.response?.data?.detail || 'Failed to update phase');
+      alert(error.response?.data?.detail || 'Failed to update scope');
+    } finally {
+      setSavingScope(null);
+    }
+  };
+
+  const handleCreateScope = async () => {
+    if (!canEditPhases || isReadOnly || !project) return;
+    
+    if (!newScope.scope_type_id) {
+      alert('Please select a scope type');
+      return;
+    }
+
+    if (!newScope.qty_sq_ft || parseFloat(String(newScope.qty_sq_ft)) <= 0) {
+      alert('Please enter a valid initial quantity (qty/sq.ft) greater than 0');
+      return;
+    }
+
+    setSavingScope(-1); // Use -1 to indicate creating
+    try {
+      // Ensure scope_type_id is a valid integer
+      const scopeTypeId = typeof newScope.scope_type_id === 'string' 
+        ? parseInt(newScope.scope_type_id, 10) 
+        : Number(newScope.scope_type_id);
+      
+      if (!scopeTypeId || isNaN(scopeTypeId)) {
+        alert('Please select a valid scope type');
+        setSavingScope(null);
+        return;
+      }
+
+      const scopeData: any = {
+        project: project.id,
+        scope_type_id: scopeTypeId,
+        description: newScope.description || '',
+        saturdays: newScope.saturdays || false,
+        full_weekends: newScope.full_weekends || false,
+        qty_sq_ft: parseFloat(String(newScope.qty_sq_ft)),
+      };
+
+      // Add optional fields only if they have values
+      if (newScope.estimation_start_date) {
+        scopeData.estimation_start_date = newScope.estimation_start_date;
+      }
+      if (newScope.estimation_end_date) {
+        scopeData.estimation_end_date = newScope.estimation_end_date;
+      }
+      if (newScope.duration_days) {
+        scopeData.duration_days = parseInt(String(newScope.duration_days));
+      }
+      if (newScope.foreman_id) {
+        scopeData.foreman_id = newScope.foreman_id;
+      }
+
+      // Note: masons, tenders, operators are controlled by meetings, not sent here
+
+      await api.post('/projects/scopes/', scopeData);
+      
+      // Refetch project data
+      await refetchProject();
+      
+      setShowAddScopeModal(false);
+      setNewScope({});
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string; [key: string]: any } } };
+      let errorMessage = 'Failed to create scope';
+      
+      if (error.response?.data) {
+        // Check for detail message
+        if (error.response.data.detail) {
+          errorMessage = error.response.data.detail;
+        } else {
+          // Check for field-specific errors
+          const fieldErrors = Object.entries(error.response.data)
+            .map(([field, messages]) => {
+              const msg = Array.isArray(messages) ? messages.join(', ') : String(messages);
+              return `${field}: ${msg}`;
+            })
+            .join('\n');
+          if (fieldErrors) {
+            errorMessage = fieldErrors;
+          }
+        }
+      }
+      
+      console.error('Scope creation error:', error.response?.data);
+      alert(errorMessage);
+    } finally {
+      setSavingScope(null);
+    }
+  };
+
+  const handleDeleteScope = async (scopeId: number) => {
+    if (!canEditPhases || isReadOnly) return;
+    
+    if (!confirm('Are you sure you want to delete this scope?')) {
+      return;
+    }
+
+    setSavingScope(scopeId);
+    try {
+      await api.delete(`/projects/scopes/${scopeId}/`);
+      
+      // Refetch project data
+      await refetchProject();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      alert(error.response?.data?.detail || 'Failed to delete scope');
     } finally {
       setSavingScope(null);
     }
@@ -554,241 +713,68 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                 </Card>
 
-                <Card title="Project Phases & Quantities">
+                <Card title="Project Scopes">
                   <div className="space-y-4">
-                    {/* Use Spectrum phases if available, otherwise fall back to project scopes */}
-                    {comprehensiveData?.phases && comprehensiveData.phases.length > 0 ? (
-                      comprehensiveData.phases.map((spectrumPhase, idx: number) => {
-                        // Find matching project scope for this Spectrum phase
-                        const matchingScope = project.scopes?.find((scope: ProjectScope) => 
-                          scope.scope_type && (
-                            spectrumPhase.phase_code?.toUpperCase().includes(scope.scope_type) ||
-                            scope.scope_type === spectrumPhase.phase_code ||
-                            spectrumPhase.description?.toUpperCase().includes(scope.scope_type)
+                    {/* Header with Add Scope button */}
+                    {canEditPhases && !isReadOnly && (
+                      <div className="flex justify-end mb-4">
+                        <Button
+                          variant="primary"
+                          onClick={() => setShowAddScopeModal(true)}
+                          className="flex items-center gap-2"
+                        >
+                          <PlusIcon className="h-5 w-5" />
+                          Add Scope
+                        </Button>
+                      </div>
+                    )}
+                    
+                    {/* Project Scopes */}
+                    {project.scopes && project.scopes.length > 0 ? (
+                      project.scopes.map((scope: ProjectScope) => {
+                        const scopeTypeName = typeof scope.scope_type === 'object' && scope.scope_type?.name 
+                          ? scope.scope_type.name 
+                          : (scope.scope_type_detail?.name || String(scope.scope_type || 'N/A'));
+                        const scopeTypeId = typeof scope.scope_type === 'object' && scope.scope_type?.id
+                          ? scope.scope_type.id
+                          : (scope.scope_type_id || scope.scope_type_detail?.id);
+                        
+                        // Find matching meeting phase for installed quantity updates
+                        const matchingMeetingPhase = meetingPhases.find((phase: MeetingPhase) => 
+                          phase.phase_code && scopeTypeName && (
+                            phase.phase_code.toUpperCase().includes(scopeTypeName.toUpperCase()) ||
+                            scopeTypeName.toUpperCase().includes(phase.phase_code.toUpperCase())
                           )
                         );
                         
-                        // Find matching meeting phase
-                        const matchingMeetingPhase = meetingPhases.find((phase: MeetingPhase) => 
-                          phase.phase_code === spectrumPhase.phase_code
-                        );
-                        
-                        // Initial quantity comes from project scope, installed comes from meetings
-                        const totalQuantity = matchingScope?.quantity ?? 0;
-                        const installedFromMeetings = matchingMeetingPhase?.installed_quantity ?? matchingScope?.installed ?? 0;
-                        const balance = Math.max(totalQuantity - installedFromMeetings, 0);
-                        
-                        const scopeId = matchingScope?.id;
-                        const isEditing = editingScope === scopeId;
-                        const updates = scopeId ? (scopeUpdates[scopeId] || {}) : {};
-                        const currentQuantity = updates.quantity !== undefined ? updates.quantity : totalQuantity;
-                        const currentInstalled = updates.installed !== undefined ? updates.installed : installedFromMeetings;
-                        const currentRemaining = currentQuantity - currentInstalled;
-                        const currentPercent = currentQuantity > 0 ? (currentInstalled / currentQuantity) * 100 : 0;
-
-                        return (
-                          <div key={idx} className="p-4 md:p-6 border border-gray-200 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
-                              <div className="flex-1 min-w-0">
-                                <h4 className="font-semibold text-gray-900 text-base md:text-lg mb-1">
-                                  {spectrumPhase.phase_code} - {spectrumPhase.description || 'No description'}
-                                </h4>
-                                {spectrumPhase.cost_type && (
-                                  <p className="text-xs text-gray-500 mt-1">Cost Type: {spectrumPhase.cost_type}</p>
-                                )}
-                                {matchingMeetingPhase?.meeting_date && (
-                                  <p className="text-xs text-blue-600 mt-1">
-                                    Last meeting update: {new Date(matchingMeetingPhase.meeting_date).toLocaleDateString()}
-                                  </p>
-                                )}
-                                {!matchingScope && canEditPhases && (
-                                  <p className="text-xs text-orange-600 mt-1 font-medium">Set initial quantity to track progress</p>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 flex-shrink-0">
-                                <StatusBadge 
-                                  status={`${currentPercent.toFixed(1)}%`} 
-                                  size="sm" 
-                                />
-                                {canEditPhases && matchingScope && !isReadOnly && (
-                                  <div className="flex gap-1">
-                                    {isEditing ? (
-                                      <>
-                                        <button
-                                          onClick={() => handleScopeUpdate(scopeId!)}
-                                          disabled={savingScope === scopeId}
-                                          className="p-1.5 text-green-600 hover:bg-green-50 rounded disabled:opacity-50 transition-colors"
-                                          title="Save"
-                                        >
-                                          <CheckIcon className="h-5 w-5" />
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            setEditingScope(null);
-                                            setScopeUpdates({});
-                                          }}
-                                          className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-                                          title="Cancel"
-                                        >
-                                          <XMarkIcon className="h-5 w-5" />
-                                        </button>
-                                      </>
-                                    ) : (
-                                      <button
-                                        onClick={() => setEditingScope(scopeId!)}
-                                        className="p-1.5 text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                                        title="Edit Initial Quantity"
-                                      >
-                                        <PencilIcon className="h-5 w-5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            
-                            {/* Phase Metrics Grid - Responsive */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-4">
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Initial Quantity</span>
-                                {isEditing && matchingScope ? (
-                                  <Input
-                                    type="number"
-                                    value={currentQuantity}
-                                    onChange={(e) => setScopeUpdates({
-                                      ...scopeUpdates,
-                                      [scopeId!]: { ...updates, quantity: parseFloat(e.target.value) || 0 }
-                                    })}
-                                    className="text-center text-base font-semibold w-full"
-                                    step="0.01"
-                                    min="0"
-                                    placeholder="Set initial qty"
-                                  />
-                                ) : (
-                                  <div>
-                                    <p className="text-lg md:text-xl font-bold text-gray-900">
-                                      {totalQuantity.toLocaleString()}
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-1">{matchingScope?.unit || 'Sq.Ft'}</p>
-                                  </div>
-                                )}
-                                {!matchingScope && canEditPhases && !isReadOnly && (
-                                  <Button
-                                    variant="secondary"
-                                    onClick={() => router.push(`/projects/${id}/edit`)}
-                                    className="mt-2 text-xs"
-                                  >
-                                    Add Scope
-                                  </Button>
-                                )}
-                                {matchingScope && totalQuantity === 0 && canEditPhases && !isEditing && (
-                                  <p className="text-xs text-orange-600 mt-1 font-medium">Click edit to set initial quantity</p>
-                                )}
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Installed (from Meetings)</span>
-                                {isEditing && matchingScope ? (
-                                  <Input
-                                    type="number"
-                                    value={currentInstalled}
-                                    onChange={(e) => setScopeUpdates({
-                                      ...scopeUpdates,
-                                      [scopeId!]: { ...updates, installed: parseFloat(e.target.value) || 0 }
-                                    })}
-                                    className="text-center text-base font-semibold w-full"
-                                    step="0.01"
-                                    min="0"
-                                  />
-                                ) : (
-                                  <div>
-                                    <p className="text-lg md:text-xl font-bold text-green-600">
-                                      {installedFromMeetings.toLocaleString()}
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-1">{matchingScope?.unit || 'Sq.Ft'}</p>
-                                  </div>
-                                )}
-                                {matchingMeetingPhase && (
-                                  <p className="text-xs text-blue-600 mt-1 font-medium">Updated from meetings</p>
-                                )}
-                                {!matchingMeetingPhase && installedFromMeetings === 0 && (
-                                  <p className="text-xs text-gray-400 mt-1">No meeting updates yet</p>
-                                )}
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Balance</span>
-                                <div>
-                                  <p className="text-lg md:text-xl font-bold text-orange-600">
-                                    {isEditing ? currentRemaining.toLocaleString() : balance.toLocaleString()}
-                                  </p>
-                                  <p className="text-xs text-gray-500 mt-1">{matchingScope?.unit || 'Sq.Ft'}</p>
-                                </div>
-                                <p className="text-xs text-gray-400 mt-1">Remaining to install</p>
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Completion Rate</span>
-                                <div>
-                                  <p className="text-lg md:text-xl font-bold text-primary">
-                                    {currentPercent.toFixed(1)}%
-                                  </p>
-                                  <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
-                                    <div
-                                      className={`h-2.5 rounded-full transition-all duration-300 ${
-                                        currentPercent >= 100 ? 'bg-green-500' :
-                                        currentPercent >= 75 ? 'bg-primary' :
-                                        currentPercent >= 50 ? 'bg-yellow-500' :
-                                        'bg-orange-500'
-                                      }`}
-                                      style={{ width: `${Math.min(currentPercent, 100)}%` }}
-                                    ></div>
-                                  </div>
-                                  <p className="text-xs text-gray-400 mt-1">Progress indicator</p>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : project.scopes && project.scopes.length > 0 ? (
-                      project.scopes.map((scope: ProjectScope) => {
-                        // Find matching meeting phase for this scope
-                        const matchingMeetingPhase = meetingPhases.find((phase: MeetingPhase) => 
-                          phase.phase_code?.toUpperCase().includes(scope.scope_type) || 
-                          scope.scope_type === phase.phase_code
-                        );
-                        
-                        // Use meeting phase data if available, otherwise use scope data
-                        // Initial quantity comes from scope, installed comes from meetings
-                        const totalQuantity = scope.quantity ?? 0;
+                        const totalQuantity = scope.qty_sq_ft ?? scope.quantity ?? 0;
                         const installedFromMeetings = matchingMeetingPhase?.installed_quantity ?? scope.installed ?? 0;
                         const balance = Math.max(totalQuantity - installedFromMeetings, 0);
+                        const percentComplete = scope.percent_complete ?? (totalQuantity > 0 ? (installedFromMeetings / totalQuantity) * 100 : 0);
                         
                         const isEditing = editingScope === scope.id;
                         const updates = scopeUpdates[scope.id] || {};
-                        const currentQuantity = updates.quantity !== undefined ? updates.quantity : totalQuantity;
-                        const currentInstalled = updates.installed !== undefined ? updates.installed : installedFromMeetings;
-                        const currentRemaining = currentQuantity - currentInstalled;
-                        const currentPercent = currentQuantity > 0 ? (currentInstalled / currentQuantity) * 100 : 0;
-
+                        
                         return (
-                          <div key={scope.id} className="p-4 md:p-6 border border-gray-200 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                          <div key={scope.id} className="p-4 md:p-6 border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition-colors">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-semibold text-gray-900 text-base md:text-lg mb-1">{scope.scope_type}</h4>
+                                <h4 className="font-semibold text-gray-900 text-base md:text-lg mb-1">{scopeTypeName}</h4>
                                 {scope.description && (
                                   <p className="text-sm text-gray-600 mt-1">{scope.description}</p>
                                 )}
+                                {scope.foreman_detail?.name && (
+                                  <p className="text-xs text-blue-600 mt-1">Foreman: {scope.foreman_detail.name}</p>
+                                )}
                                 {matchingMeetingPhase?.meeting_date && (
-                                  <p className="text-xs text-blue-600 mt-1">
+                                  <p className="text-xs text-green-600 mt-1">
                                     Last meeting update: {new Date(matchingMeetingPhase.meeting_date).toLocaleDateString()}
                                   </p>
                                 )}
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 <StatusBadge 
-                                  status={`${currentPercent.toFixed(1)}%`} 
+                                  status={`${percentComplete.toFixed(1)}%`} 
                                   size="sm" 
                                 />
                                 {canEditPhases && !isReadOnly && (
@@ -815,146 +801,500 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                                         </button>
                                       </>
                                     ) : (
-                                      <button
-                                        onClick={() => setEditingScope(scope.id)}
-                                        className="p-1.5 text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                                        title="Edit Initial Quantity"
-                                      >
-                                        <PencilIcon className="h-5 w-5" />
-                                      </button>
+                                      <>
+                                        <button
+                                          onClick={() => setEditingScope(scope.id)}
+                                          className="p-1.5 text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                                          title="Edit Scope"
+                                        >
+                                          <PencilIcon className="h-5 w-5" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteScope(scope.id)}
+                                          disabled={savingScope === scope.id}
+                                          className="p-1.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-50 transition-colors"
+                                          title="Delete Scope"
+                                        >
+                                          <TrashIcon className="h-5 w-5" />
+                                        </button>
+                                      </>
                                     )}
                                   </div>
                                 )}
                               </div>
                             </div>
                             
-                            {/* Phase Metrics Grid - Responsive */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-4">
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Initial Quantity</span>
-                                {isEditing ? (
-                                  <Input
-                                    type="number"
-                                    value={currentQuantity}
-                                    onChange={(e) => setScopeUpdates({
-                                      ...scopeUpdates,
-                                      [scope.id]: { ...updates, quantity: parseFloat(e.target.value) || 0 }
-                                    })}
-                                    className="text-center text-base font-semibold w-full"
-                                    step="0.01"
-                                    min="0"
-                                    placeholder="Set initial qty"
-                                  />
-                                ) : (
+                            {isEditing ? (
+                              <div className="space-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Scope Type</label>
+                                    <select
+                                      value={updates.scope_type_id ?? scopeTypeId ?? ''}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, scope_type_id: parseInt(e.target.value) }
+                                      })}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      disabled={isReadOnly}
+                                    >
+                                      <option value="">Select Scope Type</option>
+                                      {scopeTypes.map((st) => (
+                                        <option key={st.id} value={st.id}>{st.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Foreman</label>
+                                    <select
+                                      value={updates.foreman_id !== undefined ? (updates.foreman_id || '') : (scope.foreman_id || '')}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, foreman_id: e.target.value ? parseInt(e.target.value) : null }
+                                      })}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      disabled={isReadOnly}
+                                    >
+                                      <option value="">No Foreman</option>
+                                      {foremen.map((f) => (
+                                        <option key={f.id} value={f.id}>{f.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                                    <textarea
+                                      value={updates.description !== undefined ? updates.description : (scope.description || '')}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, description: e.target.value }
+                                      })}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                                      rows={2}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Estimation Start Date</label>
+                                    <Input
+                                      type="date"
+                                      value={updates.estimation_start_date !== undefined ? updates.estimation_start_date : (scope.estimation_start_date || '')}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, estimation_start_date: e.target.value }
+                                      })}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Estimation End Date</label>
+                                    <Input
+                                      type="date"
+                                      value={updates.estimation_end_date !== undefined ? updates.estimation_end_date : (scope.estimation_end_date || '')}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, estimation_end_date: e.target.value }
+                                      })}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration (Days)</label>
+                                    <Input
+                                      type="number"
+                                      value={updates.duration_days !== undefined ? updates.duration_days : (scope.duration_days || '')}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, duration_days: e.target.value ? parseInt(e.target.value) : undefined }
+                                      })}
+                                      min="0"
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-4">
+                                    <label className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={updates.saturdays !== undefined ? updates.saturdays : (scope.saturdays || false)}
+                                        onChange={(e) => setScopeUpdates({
+                                          ...scopeUpdates,
+                                          [scope.id]: { ...updates, saturdays: e.target.checked }
+                                        })}
+                                        disabled={isReadOnly}
+                                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                                      />
+                                      <span className="text-sm font-medium text-gray-700">Saturdays</span>
+                                    </label>
+                                    <label className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={updates.full_weekends !== undefined ? updates.full_weekends : (scope.full_weekends || false)}
+                                        onChange={(e) => setScopeUpdates({
+                                          ...scopeUpdates,
+                                          [scope.id]: { ...updates, full_weekends: e.target.checked }
+                                        })}
+                                        disabled={isReadOnly}
+                                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                                      />
+                                      <span className="text-sm font-medium text-gray-700">Full Weekends</span>
+                                    </label>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Qty/sq.ft (Initial) *</label>
+                                    <Input
+                                      type="number"
+                                      value={updates.qty_sq_ft !== undefined ? updates.qty_sq_ft : (scope.qty_sq_ft ?? scope.quantity ?? 0)}
+                                      onChange={(e) => setScopeUpdates({
+                                        ...scopeUpdates,
+                                        [scope.id]: { ...updates, qty_sq_ft: parseFloat(e.target.value) || 0 }
+                                      })}
+                                      step="0.01"
+                                      min="0"
+                                      required
+                                      disabled={isReadOnly}
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Initial quantity. Installed quantity will be updated from meetings.</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Installed <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={installedFromMeetings}
+                                      step="0.01"
+                                      min="0"
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Masons <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.masons || 0}
+                                      min="0"
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Tenders <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.tenders || 0}
+                                      min="0"
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                      Operators <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                                    </label>
+                                    <Input
+                                      type="number"
+                                      value={scope.operators || 0}
+                                      min="0"
+                                      disabled
+                                      className="bg-gray-100 cursor-not-allowed"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                {/* Scope Metrics Grid */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-4">
+                                  <div className="text-center p-3 md:p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <span className="text-xs font-medium text-gray-500 block mb-2">Qty/sq.ft</span>
                                     <p className="text-lg md:text-xl font-bold text-gray-900">
                                       {totalQuantity.toLocaleString()}
                                     </p>
-                                    <p className="text-xs text-gray-500 mt-1">{scope.unit || 'Sq.Ft'}</p>
                                   </div>
-                                )}
-                                {!isEditing && totalQuantity === 0 && canEditPhases && !isReadOnly && (
-                                  <p className="text-xs text-orange-600 mt-1 font-medium">Click edit to set initial quantity</p>
-                                )}
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Installed (from Meetings)</span>
-                                {isEditing ? (
-                                  <Input
-                                    type="number"
-                                    value={currentInstalled}
-                                    onChange={(e) => setScopeUpdates({
-                                      ...scopeUpdates,
-                                      [scope.id]: { ...updates, installed: parseFloat(e.target.value) || 0 }
-                                    })}
-                                    className="text-center text-base font-semibold w-full"
-                                    step="0.01"
-                                    min="0"
-                                  />
-                                ) : (
-                                  <div>
+                                  <div className="text-center p-3 md:p-4 bg-green-50 rounded-lg border border-green-200">
+                                    <span className="text-xs font-medium text-gray-500 block mb-2">Installed</span>
                                     <p className="text-lg md:text-xl font-bold text-green-600">
                                       {installedFromMeetings.toLocaleString()}
                                     </p>
-                                    <p className="text-xs text-gray-500 mt-1">{scope.unit || 'Sq.Ft'}</p>
+                                    {matchingMeetingPhase && (
+                                      <p className="text-xs text-green-600 mt-1">From meetings</p>
+                                    )}
                                   </div>
-                                )}
-                                {matchingMeetingPhase && (
-                                  <p className="text-xs text-blue-600 mt-1 font-medium">Updated from meetings</p>
-                                )}
-                                {!matchingMeetingPhase && installedFromMeetings === 0 && (
-                                  <p className="text-xs text-gray-400 mt-1">No meeting updates yet</p>
-                                )}
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Balance</span>
-                                <div>
-                                  <p className="text-lg md:text-xl font-bold text-orange-600">
-                                    {isEditing ? currentRemaining.toLocaleString() : balance.toLocaleString()}
-                                  </p>
-                                  <p className="text-xs text-gray-500 mt-1">{scope.unit || 'Sq.Ft'}</p>
-                                </div>
-                                <p className="text-xs text-gray-400 mt-1">Remaining to install</p>
-                              </div>
-                              
-                              <div className="text-center p-3 md:p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                                <span className="text-xs font-medium text-gray-500 block mb-2">Completion Rate</span>
-                                <div>
-                                  <p className="text-lg md:text-xl font-bold text-primary">
-                                    {currentPercent.toFixed(1)}%
-                                  </p>
-                                  <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
-                                    <div
-                                      className={`h-2.5 rounded-full transition-all duration-300 ${
-                                        currentPercent >= 100 ? 'bg-green-500' :
-                                        currentPercent >= 75 ? 'bg-primary' :
-                                        currentPercent >= 50 ? 'bg-yellow-500' :
-                                        'bg-orange-500'
-                                      }`}
-                                      style={{ width: `${Math.min(currentPercent, 100)}%` }}
-                                    ></div>
+                                  <div className="text-center p-3 md:p-4 bg-orange-50 rounded-lg border border-orange-200">
+                                    <span className="text-xs font-medium text-gray-500 block mb-2">Remaining</span>
+                                    <p className="text-lg md:text-xl font-bold text-orange-600">
+                                      {balance.toLocaleString()}
+                                    </p>
                                   </div>
-                                  <p className="text-xs text-gray-400 mt-1">Progress indicator</p>
+                                  <div className="text-center p-3 md:p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                    <span className="text-xs font-medium text-gray-500 block mb-2">Completion</span>
+                                    <p className="text-lg md:text-xl font-bold text-blue-600">
+                                      {percentComplete.toFixed(1)}%
+                                    </p>
+                                    <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                                      <div
+                                        className={`h-2 rounded-full transition-all ${
+                                          percentComplete >= 100 ? 'bg-green-500' :
+                                          percentComplete >= 75 ? 'bg-blue-500' :
+                                          percentComplete >= 50 ? 'bg-yellow-500' :
+                                          'bg-orange-500'
+                                        }`}
+                                        style={{ width: `${Math.min(percentComplete, 100)}%` }}
+                                      ></div>
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
-                            
-                            {(scope.start_date || scope.end_date) && (
-                              <div className="pt-3 border-t border-gray-200 text-xs text-gray-500">
-                                {scope.start_date && (
-                                  <span>Start: {new Date(String(scope.start_date)).toLocaleDateString()}</span>
-                                )}
-                                {scope.start_date && scope.end_date && <span className="mx-2">•</span>}
-                                {scope.end_date && (
-                                  <span>End: {new Date(String(scope.end_date)).toLocaleDateString()}</span>
-                                )}
-                              </div>
+                                
+                                {/* Scope Details Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-gray-200">
+                                  {(scope.estimation_start_date || scope.estimation_end_date) && (
+                                    <>
+                                      {scope.estimation_start_date && (
+                                        <div>
+                                          <span className="text-xs font-medium text-gray-500">Start Date</span>
+                                          <p className="text-sm font-medium text-gray-900">
+                                            {new Date(scope.estimation_start_date).toLocaleDateString()}
+                                          </p>
+                                        </div>
+                                      )}
+                                      {scope.estimation_end_date && (
+                                        <div>
+                                          <span className="text-xs font-medium text-gray-500">End Date</span>
+                                          <p className="text-sm font-medium text-gray-900">
+                                            {new Date(scope.estimation_end_date).toLocaleDateString()}
+                                          </p>
+                                        </div>
+                                      )}
+                                      {scope.duration_days && (
+                                        <div>
+                                          <span className="text-xs font-medium text-gray-500">Duration</span>
+                                          <p className="text-sm font-medium text-gray-900">{scope.duration_days} days</p>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                  {(scope.saturdays || scope.full_weekends) && (
+                                    <div>
+                                      <span className="text-xs font-medium text-gray-500">Work Schedule</span>
+                                      <p className="text-sm font-medium text-gray-900">
+                                        {scope.saturdays && 'Saturdays '}
+                                        {scope.full_weekends && 'Full Weekends'}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {(scope.masons || scope.tenders || scope.operators) && (
+                                    <div>
+                                      <span className="text-xs font-medium text-gray-500">Resources</span>
+                                      <p className="text-sm font-medium text-gray-900">
+                                        {scope.masons ? `${scope.masons} Masons` : ''}
+                                        {scope.masons && (scope.tenders || scope.operators) ? ', ' : ''}
+                                        {scope.tenders ? `${scope.tenders} Tenders` : ''}
+                                        {scope.tenders && scope.operators ? ', ' : ''}
+                                        {scope.operators ? `${scope.operators} Operators` : ''}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </>
                             )}
                           </div>
                         );
                       })
-                    ) : loadingComprehensive ? (
-                      <div className="text-center py-12">
-                        <LoadingSpinner />
-                        <p className="text-gray-500 mt-4">Loading phases from Spectrum...</p>
-                      </div>
                     ) : (
                       <div className="text-center py-12">
-                        <p className="text-gray-500 mb-4">No phases available for this project</p>
+                        <p className="text-gray-500 mb-4">No scopes defined for this project</p>
                         {canEditPhases && !isReadOnly && (
                           <Button
                             variant="secondary"
-                            onClick={() => router.push(`/projects/${id}/edit`)}
+                            onClick={() => setShowAddScopeModal(true)}
                           >
-                            Add Scopes
+                            Add First Scope
                           </Button>
                         )}
                       </div>
                     )}
                   </div>
                 </Card>
+
+                {/* Add Scope Modal */}
+                {showAddScopeModal && (
+                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                      <h2 className="text-xl font-bold mb-4">Add New Scope</h2>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Scope Type *</label>
+                          <select
+                            value={newScope.scope_type_id || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setNewScope({ 
+                                ...newScope, 
+                                scope_type_id: value ? parseInt(value, 10) : undefined 
+                              });
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                            required
+                          >
+                            <option value="">Select Scope Type</option>
+                            {scopeTypes.map((st) => (
+                              <option key={st.id} value={st.id}>{st.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                          <textarea
+                            value={newScope.description || ''}
+                            onChange={(e) => setNewScope({ ...newScope, description: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                            rows={3}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Estimation Start Date</label>
+                            <Input
+                              type="date"
+                              value={newScope.estimation_start_date || ''}
+                              onChange={(e) => setNewScope({ ...newScope, estimation_start_date: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Estimation End Date</label>
+                            <Input
+                              type="date"
+                              value={newScope.estimation_end_date || ''}
+                              onChange={(e) => setNewScope({ ...newScope, estimation_end_date: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Duration (Days)</label>
+                            <Input
+                              type="number"
+                              value={newScope.duration_days || ''}
+                              onChange={(e) => setNewScope({ ...newScope, duration_days: e.target.value ? parseInt(e.target.value) : undefined })}
+                              min="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Foreman</label>
+                            <select
+                              value={newScope.foreman_id || ''}
+                              onChange={(e) => setNewScope({ ...newScope, foreman_id: e.target.value ? parseInt(e.target.value) : undefined })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                            >
+                              <option value="">No Foreman</option>
+                              {foremen.map((f) => (
+                                <option key={f.id} value={f.id}>{f.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={newScope.saturdays || false}
+                                onChange={(e) => setNewScope({ ...newScope, saturdays: e.target.checked })}
+                                className="rounded border-gray-300 text-primary focus:ring-primary"
+                              />
+                              <span className="text-sm font-medium text-gray-700">Saturdays</span>
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={newScope.full_weekends || false}
+                                onChange={(e) => setNewScope({ ...newScope, full_weekends: e.target.checked })}
+                                className="rounded border-gray-300 text-primary focus:ring-primary"
+                              />
+                              <span className="text-sm font-medium text-gray-700">Full Weekends</span>
+                            </label>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Qty/sq.ft (Initial) *
+                            </label>
+                            <Input
+                              type="number"
+                              value={newScope.qty_sq_ft || ''}
+                              onChange={(e) => setNewScope({ ...newScope, qty_sq_ft: parseFloat(e.target.value) || 0 })}
+                              step="0.01"
+                              min="0"
+                              required
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Initial quantity. Installed quantity will be updated from meetings.</p>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Masons <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                            </label>
+                            <Input
+                              type="number"
+                              value={newScope.masons || '0'}
+                              disabled
+                              className="bg-gray-100 cursor-not-allowed"
+                              min="0"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Tenders <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                            </label>
+                            <Input
+                              type="number"
+                              value={newScope.tenders || '0'}
+                              disabled
+                              className="bg-gray-100 cursor-not-allowed"
+                              min="0"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Operators <span className="text-xs text-gray-500">(Updated from meetings)</span>
+                            </label>
+                            <Input
+                              type="number"
+                              value={newScope.operators || '0'}
+                              disabled
+                              className="bg-gray-100 cursor-not-allowed"
+                              min="0"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Controlled by meetings</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 justify-end pt-4">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setShowAddScopeModal(false);
+                              setNewScope({});
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleCreateScope}
+                            disabled={savingScope === -1 || !newScope.scope_type_id}
+                            isLoading={savingScope === -1}
+                          >
+                            Create Scope
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4 md:space-y-6 w-full">

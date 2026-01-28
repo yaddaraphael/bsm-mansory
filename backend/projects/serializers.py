@@ -3,19 +3,128 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry
+from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry, ScopeType, Foreman
 from accounts.serializers import UserSerializer
 from branches.serializers import BranchSerializer
 
 
+class ScopeTypeSerializer(serializers.ModelSerializer):
+    """Serializer for ScopeType model. Code is auto-generated from name."""
+    
+    class Meta:
+        model = ScopeType
+        fields = ['id', 'code', 'name', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['code', 'created_at', 'updated_at']
+    
+    def create(self, validated_data):
+        """Auto-generate code from name if not provided."""
+        name = validated_data.get('name', '')
+        if name and not validated_data.get('code'):
+            # Generate code from name: uppercase, replace spaces with underscores
+            validated_data['code'] = name.upper().replace(' ', '_').replace('-', '_')
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Auto-update code if name changes."""
+        if 'name' in validated_data and validated_data['name'] != instance.name:
+            # Regenerate code from new name
+            validated_data['code'] = validated_data['name'].upper().replace(' ', '_').replace('-', '_')
+        return super().update(instance, validated_data)
+
+
+class ForemanSerializer(serializers.ModelSerializer):
+    """Serializer for Foreman model."""
+    
+    class Meta:
+        model = Foreman
+        fields = ['id', 'name', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
 class ProjectScopeSerializer(serializers.ModelSerializer):
+    """Serializer for ProjectScope model with all fields."""
+    scope_type_detail = ScopeTypeSerializer(source='scope_type', read_only=True)
+    scope_type_id = serializers.IntegerField(write_only=True, required=True)
+    foreman_detail = ForemanSerializer(source='foreman', read_only=True)
+    foreman_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    
     remaining = serializers.ReadOnlyField()
     percent_complete = serializers.ReadOnlyField()
+    quantity = serializers.ReadOnlyField()  # Alias for qty_sq_ft for backward compatibility
 
     class Meta:
         model = ProjectScope
-        fields = '__all__'
-        read_only_fields = ['created_at', 'updated_at']
+        fields = [
+            'id', 'project', 'scope_type', 'scope_type_id', 'scope_type_detail',
+            'description', 'estimation_start_date', 'estimation_end_date', 'duration_days',
+            'saturdays', 'full_weekends', 'qty_sq_ft', 'quantity', 'installed', 'remaining',
+            'percent_complete', 'foreman', 'foreman_id', 'foreman_detail',
+            'masons', 'tenders', 'operators', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'remaining', 'percent_complete', 'quantity', 'scope_type', 'foreman', 'installed']
+        extra_kwargs = {
+            'scope_type': {'required': False},
+            'foreman': {'required': False},
+        }
+    
+    def validate_scope_type_id(self, value):
+        """Validate that the scope type exists and is active."""
+        try:
+            scope_type = ScopeType.objects.get(id=value, is_active=True)
+            return value
+        except ScopeType.DoesNotExist:
+            raise serializers.ValidationError("Scope type not found or inactive.")
+    
+    def validate_foreman_id(self, value):
+        """Validate that the foreman exists and is active."""
+        if value is None:
+            return value
+        try:
+            foreman = Foreman.objects.get(id=value, is_active=True)
+            return value
+        except Foreman.DoesNotExist:
+            raise serializers.ValidationError("Foreman not found or inactive.")
+    
+    def validate_qty_sq_ft(self, value):
+        """Validate that qty_sq_ft is provided and positive."""
+        if value is None:
+            raise serializers.ValidationError("Initial quantity (qty_sq_ft) is required.")
+        if value < 0:
+            raise serializers.ValidationError("Initial quantity must be positive.")
+        return value
+    
+    def create(self, validated_data):
+        """Create ProjectScope with scope_type_id and foreman_id."""
+        scope_type_id = validated_data.pop('scope_type_id')
+        foreman_id = validated_data.pop('foreman_id', None)
+        
+        scope_type = ScopeType.objects.get(id=scope_type_id)
+        validated_data['scope_type'] = scope_type
+        
+        if foreman_id:
+            foreman = Foreman.objects.get(id=foreman_id)
+            validated_data['foreman'] = foreman
+        else:
+            validated_data['foreman'] = None
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update ProjectScope with scope_type_id and foreman_id."""
+        if 'scope_type_id' in validated_data:
+            scope_type_id = validated_data.pop('scope_type_id')
+            scope_type = ScopeType.objects.get(id=scope_type_id)
+            validated_data['scope_type'] = scope_type
+        
+        if 'foreman_id' in validated_data:
+            foreman_id = validated_data.pop('foreman_id')
+            if foreman_id:
+                foreman = Foreman.objects.get(id=foreman_id)
+                validated_data['foreman'] = foreman
+            else:
+                validated_data['foreman'] = None
+        
+        return super().update(instance, validated_data)
 
 
 class ProjectListSerializer(serializers.ModelSerializer):

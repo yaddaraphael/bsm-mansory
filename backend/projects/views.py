@@ -18,11 +18,12 @@ from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.contrib.auth import get_user_model
-from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry, SCOPE_OF_WORK_CHOICES
+from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, LaborEntry, SCOPE_OF_WORK_CHOICES, ScopeType, Foreman
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectScopeSerializer,
     DailyReportSerializer, WeeklyChecklistSerializer,
-    PublicProjectSerializer, LaborEntrySerializer
+    PublicProjectSerializer, LaborEntrySerializer,
+    ScopeTypeSerializer, ForemanSerializer
 )
 from .utils import generate_job_number
 from .permissions import ProjectViewSetPermission
@@ -71,7 +72,7 @@ def _annotated_projects_queryset(*, include_scopes: bool):
     # Aggregate scope totals ONCE (instead of per project property call)
     # Use _annot suffix to avoid conflicts with @property methods
     qs = qs.annotate(
-        total_quantity_annot=Coalesce(Sum('scopes__quantity'), zero_dec),
+        total_quantity_annot=Coalesce(Sum('scopes__qty_sq_ft'), zero_dec),
         total_installed_annot=Coalesce(Sum('scopes__installed'), zero_dec),
     ).annotate(
         remaining_annot=Case(
@@ -175,10 +176,48 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         return Response(stats)
 class ProjectScopeViewSet(viewsets.ModelViewSet):
-    queryset = ProjectScope.objects.all()
+    queryset = ProjectScope.objects.all().select_related('scope_type', 'foreman', 'project')
     serializer_class = ProjectScopeSerializer
     permission_classes = [IsAuthenticated]
     filterset_fields = ['project', 'scope_type']
+    
+    def get_queryset(self):
+        """Filter scopes based on project access."""
+        queryset = super().get_queryset()
+        project_id = self.request.query_params.get('project', None)
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset
+
+
+class ScopeTypeViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing scope types."""
+    queryset = ScopeType.objects.filter(is_active=True).order_by('name')
+    serializer_class = ScopeTypeSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['is_active']
+    
+    def get_queryset(self):
+        """Allow admins to see inactive scope types."""
+        user = self.request.user
+        if user.role in ['ROOT_SUPERADMIN', 'ADMIN']:
+            return ScopeType.objects.all().order_by('name')
+        return ScopeType.objects.filter(is_active=True).order_by('name')
+
+
+class ForemanViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing foremen."""
+    queryset = Foreman.objects.filter(is_active=True).order_by('name')
+    serializer_class = ForemanSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['is_active']
+    
+    def get_queryset(self):
+        """Allow admins to see inactive foremen."""
+        user = self.request.user
+        if user.role in ['ROOT_SUPERADMIN', 'ADMIN']:
+            return Foreman.objects.all().order_by('name')
+        return Foreman.objects.filter(is_active=True).order_by('name')
 
 
 class DailyReportViewSet(viewsets.ModelViewSet):
@@ -991,52 +1030,85 @@ class BranchPortalProjectListView(generics.ListAPIView):
         ).order_by('-updated_at')
 
 
+# public hq start code
+
+# projects/views.py
+from django.db.models import Sum, Value, FloatField, DecimalField, F, Case, When, ExpressionWrapper
+from django.db.models.functions import Coalesce
+
 class HQPortalProjectListView(generics.ListAPIView):
-    """
-    Public endpoint to view ALL projects for HQ portal.
-    Requires HQ portal password.
-    """
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsSetPagination
-    
+
     def get_queryset(self):
         password = self.request.query_params.get('password', '').strip()
         hq_password = getattr(settings, 'HQ_PORTAL_PASSWORD', '').strip()
-        
+
         if not hq_password:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('HQ portal access is not enabled.')
-        
+
         if not password:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Password is required.')
-        
-        # Verify password (support both plain text and hashed)
-        # First check plain text match (for .env stored passwords)
-        # Then check hashed password (if password was hashed)
+
+        # Verify password (plain or hashed)
         password_valid = False
         if password == hq_password:
             password_valid = True
-        elif hq_password.startswith('pbkdf2_') or hq_password.startswith('bcrypt') or hq_password.startswith('argon2'):
-            # Password appears to be hashed, use check_password
+        elif hq_password.startswith(('pbkdf2_', 'bcrypt', 'argon2')):
             try:
                 password_valid = check_password(password, hq_password)
             except Exception:
                 password_valid = False
         else:
-            # Try check_password anyway in case it's a different hash format
             try:
                 password_valid = check_password(password, hq_password)
             except Exception:
                 password_valid = False
-        
+
         if not password_valid:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Invalid HQ portal password.')
-        
-        # Return ALL public projects
-        return Project.objects.filter(is_public=True).order_by('-updated_at')
+
+        # Optional: allow public-only mode via param (default OFF for HQ)
+        public_only = str(self.request.query_params.get('public_only', '0')).lower() in ('1', 'true', 'yes')
+
+        dec_field = DecimalField(max_digits=12, decimal_places=2)
+        zero_dec = Value(0, output_field=dec_field)
+
+        qs = (
+            Project.objects
+            .select_related('branch', 'project_manager', 'superintendent', 'foreman', 'general_contractor')
+            .prefetch_related('scopes')
+            .annotate(
+                total_quantity_annot=Coalesce(Sum('scopes__qty_sq_ft'), zero_dec),
+                total_installed_annot=Coalesce(Sum('scopes__installed'), zero_dec),
+            )
+            .annotate(
+                remaining_annot=Case(
+                    When(total_quantity_annot__gt=F('total_installed_annot'),
+                         then=F('total_quantity_annot') - F('total_installed_annot')),
+                    default=zero_dec,
+                    output_field=dec_field,
+                ),
+                production_percent_complete_annot=Case(
+                    When(total_quantity_annot=0, then=Value(0.0)),
+                    default=ExpressionWrapper(
+                        (F('total_installed_annot') * Value(100.0)) / F('total_quantity_annot'),
+                        output_field=FloatField(),
+                    ),
+                    output_field=FloatField(),
+                ),
+            )
+        )
+
+        if public_only:
+            qs = qs.filter(is_public=True)
+
+        return qs.order_by('-updated_at')
+
 
 
 @api_view(['POST'])

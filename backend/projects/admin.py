@@ -1,5 +1,21 @@
 from django.contrib import admin
-from .models import Project, ProjectScope, DailyReport, WeeklyChecklist
+from .models import Project, ProjectScope, DailyReport, WeeklyChecklist, ScopeType, Foreman
+
+
+@admin.register(ScopeType)
+class ScopeTypeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'is_active', 'created_at']
+    list_filter = ['is_active']
+    search_fields = ['code', 'name']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(Foreman)
+class ForemanAdmin(admin.ModelAdmin):
+    list_display = ['name', 'is_active', 'created_at']
+    list_filter = ['is_active']
+    search_fields = ['name']
+    readonly_fields = ['created_at', 'updated_at']
 
 
 @admin.register(Project)
@@ -37,9 +53,31 @@ class ProjectAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectScope)
 class ProjectScopeAdmin(admin.ModelAdmin):
-    list_display = ['project', 'scope_type', 'quantity', 'installed', 'remaining', 'percent_complete']
-    list_filter = ['scope_type']
-    search_fields = ['project__job_number', 'project__name']
+    list_display = ['project', 'scope_type', 'qty_sq_ft', 'installed', 'remaining', 'percent_complete', 'foreman']
+    list_filter = ['scope_type', 'foreman']
+    search_fields = ['project__job_number', 'project__name', 'scope_type__name']
+    readonly_fields = ['created_at', 'updated_at', 'remaining', 'percent_complete']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('project', 'scope_type', 'description')
+        }),
+        ('Dates', {
+            'fields': ('estimation_start_date', 'estimation_end_date', 'duration_days')
+        }),
+        ('Schedule', {
+            'fields': ('saturdays', 'full_weekends')
+        }),
+        ('Quantities', {
+            'fields': ('qty_sq_ft', 'installed', 'remaining', 'percent_complete')
+        }),
+        ('Resources', {
+            'fields': ('foreman', 'masons', 'tenders', 'operators')
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at')
+        }),
+    )
 
 
 @admin.register(DailyReport)

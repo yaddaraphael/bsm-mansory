@@ -1,76 +1,90 @@
 """
 Signals to sync meeting phase updates to project scopes.
+Meetings are the authoritative source for installed quantities, masons, tenders, and operators.
 """
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from .models import MeetingJobPhase, MeetingJob
-from projects.models import ProjectScope
+from projects.models import ProjectScope, ScopeType
 from decimal import Decimal
 
 
 def sync_meeting_phase_to_project_scope(meeting_job_phase):
     """
-    Sync MeetingJobPhase installed_quantity to ProjectScope.installed.
-    Maps phase_code to scope_type by trying to match scope types in the phase_code.
-    Meetings are the authoritative source for installed quantities.
+    Sync MeetingJobPhase data to ProjectScope.
+    Updates: installed_quantity, masons, tenders (labors), operators.
+    Maps phase_code to scope_type by trying to match scope types.
+    Meetings are the authoritative source for these values.
     """
     import logging
     logger = logging.getLogger(__name__)
     
     project = meeting_job_phase.meeting_job.project
     
-    # Try to find matching ProjectScope by scope_type
-    # Phase codes might contain scope type information (e.g., "CMU", "BRICK", etc.)
-    scope_type = None
+    # Try to find matching ProjectScope
     matching_scope = None
-    
-    # Get all scope type choices
-    from projects.models import SCOPE_OF_WORK_CHOICES
+    scope_type_obj = None
     
     # Priority 1: Use selected_scope from meeting_job if available
+    # selected_scope is a CharField storing the scope type code
     if meeting_job_phase.meeting_job.selected_scope:
         try:
-            matching_scope = ProjectScope.objects.get(
-                project=project, 
-                scope_type=meeting_job_phase.meeting_job.selected_scope
+            # Find ScopeType by code
+            scope_type_obj = ScopeType.objects.get(
+                code=meeting_job_phase.meeting_job.selected_scope, 
+                is_active=True
             )
-            scope_type = meeting_job_phase.meeting_job.selected_scope
-        except ProjectScope.DoesNotExist:
+            matching_scope = ProjectScope.objects.get(project=project, scope_type=scope_type_obj)
+        except (ScopeType.DoesNotExist, ProjectScope.DoesNotExist):
             pass
     
     # Priority 2: Try to match phase_code with scope types
     if not matching_scope:
         phase_code_upper = meeting_job_phase.phase_code.upper()
-        for scope_choice in SCOPE_OF_WORK_CHOICES:
-            scope_code = scope_choice[0]
-            scope_name = scope_choice[1]
-            
+        # Get all active scope types
+        active_scope_types = ScopeType.objects.filter(is_active=True)
+        
+        for scope_type in active_scope_types:
             # Check if phase_code contains the scope code or name
-            if scope_code in phase_code_upper or scope_name.upper() in phase_code_upper:
+            if (scope_type.code.upper() in phase_code_upper or 
+                scope_type.name.upper() in phase_code_upper):
                 try:
-                    matching_scope = ProjectScope.objects.get(project=project, scope_type=scope_code)
-                    scope_type = scope_code
+                    matching_scope = ProjectScope.objects.get(project=project, scope_type=scope_type)
+                    scope_type_obj = scope_type
                     break
                 except ProjectScope.DoesNotExist:
                     continue
     
-    # Update the matching scope with the latest installed_quantity from the most recent meeting
+    # Update the matching scope with the latest data from the most recent meeting
     if matching_scope:
-        # Get the most recent installed_quantity for this scope from all meetings
+        # Get the most recent phase data for this scope from all meetings
         latest_phase = MeetingJobPhase.objects.filter(
             meeting_job__project=project,
             phase_code=meeting_job_phase.phase_code
         ).order_by('-meeting_job__meeting__meeting_date', '-updated_at').first()
         
         if latest_phase:
-            # Update the project scope with the latest installed quantity from meetings
-            # This overwrites any values from daily reports - meetings are authoritative
+            # Update the project scope with the latest data from meetings
+            # Meetings are authoritative for: installed, masons, tenders, operators
             old_installed = matching_scope.installed
+            old_masons = matching_scope.masons
+            old_tenders = matching_scope.tenders
+            old_operators = matching_scope.operators
+            
             matching_scope.installed = Decimal(str(latest_phase.installed_quantity))
-            matching_scope.save(update_fields=['installed', 'updated_at'])
+            matching_scope.masons = latest_phase.masons or 0
+            matching_scope.tenders = latest_phase.labors or 0  # labors in MeetingJobPhase = tenders in ProjectScope
+            matching_scope.operators = latest_phase.operators or 0
+            
+            matching_scope.save(update_fields=['installed', 'masons', 'tenders', 'operators', 'updated_at'])
+            
             logger.info(
-                f"Synced meeting phase {latest_phase.phase_code} to project scope {scope_type}: "
-                f"{old_installed} → {matching_scope.installed} (from meeting {latest_phase.meeting_job.meeting.meeting_date})"
+                f"Synced meeting phase {latest_phase.phase_code} to project scope {scope_type_obj.name if scope_type_obj else 'N/A'}: "
+                f"installed: {old_installed} → {matching_scope.installed}, "
+                f"masons: {old_masons} → {matching_scope.masons}, "
+                f"tenders: {old_tenders} → {matching_scope.tenders}, "
+                f"operators: {old_operators} → {matching_scope.operators} "
+                f"(from meeting {latest_phase.meeting_job.meeting.meeting_date})"
             )
     else:
         # Log when we can't find a matching scope (for debugging)

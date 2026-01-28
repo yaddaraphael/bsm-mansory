@@ -19,6 +19,7 @@ import {
   ChevronRightIcon,
   SignalIcon,
   ClipboardDocumentCheckIcon,
+  PlusIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -30,17 +31,18 @@ export default function Sidebar() {
   const { user, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [usersDropdownOpen, setUsersDropdownOpen] = useState(false);
+  const [meetingsDropdownOpen, setMeetingsDropdownOpen] = useState(false);
   const { isCollapsed, toggleCollapse } = useSidebar();
   
   const baseNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: HomeIcon, roles: 'all' },
+    { name: 'Meetings', href: '/meetings', icon: ClipboardDocumentCheckIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'BRANCH_MANAGER', 'PROJECT_MANAGER'], hasDropdown: true },
     { name: 'Projects', href: '/projects', icon: FolderIcon, roles: 'all' },
     { name: 'Divisions', href: '/branches', icon: BuildingOfficeIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'] },
   ];
   
   const adminNavigation = [
     { name: 'Users', href: '/users', icon: UserGroupIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'], hasDropdown: true },
-    { name: 'Meetings', href: '/meetings', icon: ClipboardDocumentCheckIcon, roles: ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'BRANCH_MANAGER', 'PROJECT_MANAGER'] },
     { name: 'Spectrum', href: '/spectrum', icon: SignalIcon, roles: ['ROOT_SUPERADMIN', 'ADMIN'] },
     { name: 'Settings', href: '/settings', icon: Cog6ToothIcon, roles: 'all' },
   ];
@@ -95,6 +97,13 @@ export default function Sidebar() {
     }
   }, [pathname]);
 
+  // Keep meetings dropdown open when on meetings page
+  useEffect(() => {
+    if (pathname?.startsWith('/meetings')) {
+      setMeetingsDropdownOpen(true);
+    }
+  }, [pathname]);
+
 
   // Close mobile menu on outside click
   useEffect(() => {
@@ -113,6 +122,7 @@ export default function Sidebar() {
   useEffect(() => {
     if (isCollapsed) {
       setUsersDropdownOpen(false);
+      setMeetingsDropdownOpen(false);
     }
   }, [isCollapsed]);
 
@@ -269,6 +279,98 @@ export default function Sidebar() {
                           </Link>
                         );
                       })}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            if (hasDropdown && item.name === 'Meetings') {
+              const isMeetingsPage = pathname?.startsWith('/meetings');
+              const canCreateMeeting = user?.role === 'ROOT_SUPERADMIN' || user?.role === 'SUPERADMIN' || user?.role === 'ADMIN';
+              
+              // On mobile, always show full with text. On desktop, show collapsed version when collapsed
+              if (isCollapsed) {
+                return (
+                  <Link
+                    key={item.name}
+                    href="/meetings"
+                    className={clsx(
+                      'flex items-center px-4 md:px-6 py-3 text-sm font-medium transition-colors',
+                      'lg:justify-center lg:px-2',
+                      isMeetingsPage
+                        ? 'bg-primary text-white'
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    )}
+                    title={item.name}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                  >
+                    <item.icon className={clsx('h-5 w-5 flex-shrink-0', !isCollapsed && 'mr-3', isCollapsed && 'lg:mr-0')} />
+                    <span className={clsx('truncate', isCollapsed && 'lg:hidden')}>{item.name}</span>
+                  </Link>
+                );
+              }
+              return (
+                <div key={item.name}>
+                  <button
+                    onClick={() => setMeetingsDropdownOpen(!meetingsDropdownOpen)}
+                    className={clsx(
+                      'w-full flex items-center justify-between px-4 md:px-6 py-3 text-sm font-medium transition-all duration-200',
+                      isMeetingsPage || meetingsDropdownOpen
+                        ? 'bg-primary text-white'
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    )}
+                  >
+                    <div className="flex items-center">
+                      <item.icon className="mr-3 h-5 w-5 flex-shrink-0" />
+                      <span className="truncate">{item.name}</span>
+                    </div>
+                    <div className="flex-shrink-0 transition-transform duration-200" style={{
+                      transform: meetingsDropdownOpen ? 'rotate(0deg)' : 'rotate(-90deg)'
+                    }}>
+                      <ChevronDownIcon className="h-4 w-4" />
+                    </div>
+                  </button>
+                  <div 
+                    className={clsx(
+                      'overflow-hidden transition-all duration-300 ease-in-out',
+                      meetingsDropdownOpen ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'
+                    )}
+                  >
+                    <div className="bg-gray-800 border-t border-gray-700">
+                      <Link
+                        href="/meetings"
+                        className={clsx(
+                          'flex items-center px-8 md:px-10 py-2.5 text-sm transition-all duration-150',
+                          'border-l-2',
+                          isMeetingsPage && searchParams?.get('create') !== 'true'
+                            ? 'bg-gray-700 text-white border-primary'
+                            : 'text-gray-400 hover:bg-gray-700 hover:text-white border-transparent hover:border-gray-600'
+                        )}
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                        }}
+                      >
+                        <span className="truncate font-normal">All Meetings</span>
+                      </Link>
+                      {canCreateMeeting && (
+                        <Link
+                          href="/meetings?create=true"
+                          className={clsx(
+                            'flex items-center px-8 md:px-10 py-2.5 text-sm transition-all duration-150',
+                            'border-l-2',
+                            searchParams?.get('create') === 'true'
+                              ? 'bg-gray-700 text-white border-primary'
+                              : 'text-gray-400 hover:bg-gray-700 hover:text-white border-transparent hover:border-gray-600'
+                          )}
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                          }}
+                        >
+                          <PlusIcon className="mr-2 h-4 w-4" />
+                          <span className="truncate font-normal">New Meeting</span>
+                        </Link>
+                      )}
                     </div>
                   </div>
                 </div>

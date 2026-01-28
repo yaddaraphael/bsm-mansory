@@ -6,12 +6,15 @@ from .views import (
     LaborEntryViewSet,
     PublicProjectListView, PublicProjectDetailView,
     BranchPortalProjectListView, HQPortalProjectListView,
-    set_hq_portal_password, get_hq_portal_password_status
+    set_hq_portal_password, get_hq_portal_password_status,
+    ScopeTypeViewSet, ForemanViewSet
 )
 
 router = DefaultRouter()
 router.register(r'projects', ProjectViewSet, basename='project')
 router.register(r'scopes', ProjectScopeViewSet, basename='scope')
+router.register(r'scope-types', ScopeTypeViewSet, basename='scope-type')
+router.register(r'foremen', ForemanViewSet, basename='foreman')
 router.register(r'daily-reports', DailyReportViewSet, basename='daily-report')
 router.register(r'labor-entries', LaborEntryViewSet, basename='labor-entry')
 router.register(r'weekly-checklists', WeeklyChecklistViewSet, basename='weekly-checklist')

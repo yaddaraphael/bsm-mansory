@@ -11,8 +11,11 @@ import { useState, useEffect } from 'react';
 import api from '@/lib/api';
 import clsx from 'clsx';
 import { useBranches } from '@/hooks/useBranches';
+import { PencilIcon, TrashIcon, PlusIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import Modal from '@/components/ui/Modal';
 
-type TabType = 'profile' | 'security' | 'privacy' | 'notifications' | 'portal-passwords';
+type TabType = 'profile' | 'security' | 'privacy' | 'notifications' | 'portal-passwords' | 'scope-types' | 'foremen';
 
 export default function SettingsPage() {
   const { user, refresh } = useAuth();
@@ -240,12 +243,172 @@ export default function SettingsPage() {
     }
   };
 
+  // Scope Types & Foremen Management State
+  const [scopeTypes, setScopeTypes] = useState<Array<{ id: number; code: string; name: string; is_active: boolean }>>([]);
+  const [foremen, setForemen] = useState<Array<{ id: number; name: string; is_active: boolean }>>([]);
+  const [loadingScopeTypes, setLoadingScopeTypes] = useState(false);
+  const [loadingForemen, setLoadingForemen] = useState(false);
+  const [editingScopeType, setEditingScopeType] = useState<number | null>(null);
+  const [editingForeman, setEditingForeman] = useState<number | null>(null);
+  const [newScopeType, setNewScopeType] = useState({ name: '' });
+  const [newForeman, setNewForeman] = useState({ name: '' });
+  const [deleteScopeTypeId, setDeleteScopeTypeId] = useState<number | null>(null);
+  const [deleteForemanId, setDeleteForemanId] = useState<number | null>(null);
+
+  // Fetch scope types
+  useEffect(() => {
+    if (isAdmin && activeTab === 'scope-types') {
+      setLoadingScopeTypes(true);
+      api.get('/projects/scope-types/')
+        .then(res => {
+          setScopeTypes(res.data.results || res.data || []);
+        })
+        .catch(err => {
+          console.error('Failed to fetch scope types:', err);
+        })
+        .finally(() => {
+          setLoadingScopeTypes(false);
+        });
+    }
+  }, [isAdmin, activeTab]);
+
+  // Fetch foremen
+  useEffect(() => {
+    if (isAdmin && activeTab === 'foremen') {
+      setLoadingForemen(true);
+      api.get('/projects/foremen/')
+        .then(res => {
+          setForemen(res.data.results || res.data || []);
+        })
+        .catch(err => {
+          console.error('Failed to fetch foremen:', err);
+        })
+        .finally(() => {
+          setLoadingForemen(false);
+        });
+    }
+  }, [isAdmin, activeTab]);
+
+  const handleCreateScopeType = async () => {
+    if (!newScopeType.name.trim()) {
+      setMessage({ type: 'error', text: 'Please provide a scope type name' });
+      return;
+    }
+    setLoadingScopeTypes(true);
+    try {
+      await api.post('/projects/scope-types/', {
+        name: newScopeType.name.trim(),
+        is_active: true
+      });
+      setMessage({ type: 'success', text: 'Scope type created successfully' });
+      setNewScopeType({ name: '' });
+      const res = await api.get('/projects/scope-types/');
+      setScopeTypes(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to create scope type' });
+    } finally {
+      setLoadingScopeTypes(false);
+    }
+  };
+
+  const handleUpdateScopeType = async (id: number, updates: { name?: string; is_active?: boolean }) => {
+    setLoadingScopeTypes(true);
+    try {
+      await api.patch(`/projects/scope-types/${id}/`, updates);
+      setMessage({ type: 'success', text: 'Scope type updated successfully' });
+      setEditingScopeType(null);
+      const res = await api.get('/projects/scope-types/');
+      setScopeTypes(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to update scope type' });
+    } finally {
+      setLoadingScopeTypes(false);
+    }
+  };
+
+  const handleDeleteScopeType = async () => {
+    if (!deleteScopeTypeId) return;
+    setLoadingScopeTypes(true);
+    try {
+      await api.delete(`/projects/scope-types/${deleteScopeTypeId}/`);
+      setMessage({ type: 'success', text: 'Scope type deleted successfully' });
+      setDeleteScopeTypeId(null);
+      const res = await api.get('/projects/scope-types/');
+      setScopeTypes(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to delete scope type' });
+    } finally {
+      setLoadingScopeTypes(false);
+    }
+  };
+
+  const handleCreateForeman = async () => {
+    if (!newForeman.name.trim()) {
+      setMessage({ type: 'error', text: 'Please provide a foreman name' });
+      return;
+    }
+    setLoadingForemen(true);
+    try {
+      await api.post('/projects/foremen/', {
+        name: newForeman.name.trim(),
+        is_active: true
+      });
+      setMessage({ type: 'success', text: 'Foreman created successfully' });
+      setNewForeman({ name: '' });
+      const res = await api.get('/projects/foremen/');
+      setForemen(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to create foreman' });
+    } finally {
+      setLoadingForemen(false);
+    }
+  };
+
+  const handleUpdateForeman = async (id: number, updates: { name?: string; is_active?: boolean }) => {
+    setLoadingForemen(true);
+    try {
+      await api.patch(`/projects/foremen/${id}/`, updates);
+      setMessage({ type: 'success', text: 'Foreman updated successfully' });
+      setEditingForeman(null);
+      const res = await api.get('/projects/foremen/');
+      setForemen(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to update foreman' });
+    } finally {
+      setLoadingForemen(false);
+    }
+  };
+
+  const handleDeleteForeman = async () => {
+    if (!deleteForemanId) return;
+    setLoadingForemen(true);
+    try {
+      await api.delete(`/projects/foremen/${deleteForemanId}/`);
+      setMessage({ type: 'success', text: 'Foreman deleted successfully' });
+      setDeleteForemanId(null);
+      const res = await api.get('/projects/foremen/');
+      setForemen(res.data.results || res.data || []);
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setMessage({ type: 'error', text: error.response?.data?.detail || 'Failed to delete foreman' });
+    } finally {
+      setLoadingForemen(false);
+    }
+  };
+
   const tabs: { id: TabType; name: string }[] = [
     { id: 'profile', name: 'Profile' },
     { id: 'security', name: 'Security' },
     { id: 'privacy', name: 'Privacy' },
     { id: 'notifications', name: 'Notifications' },
     ...(isAdmin || isBranchManager ? [{ id: 'portal-passwords' as TabType, name: 'Portal Passwords' }] : []),
+    ...(isAdmin ? [{ id: 'scope-types' as TabType, name: 'Scope Types' }] : []),
+    ...(isAdmin ? [{ id: 'foremen' as TabType, name: 'Foremen' }] : []),
   ];
 
   return (
@@ -254,13 +417,12 @@ export default function SettingsPage() {
         <Sidebar />
         <div className="flex-1 flex flex-col min-w-0 sidebar-content">
           <Header />
-          <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-4 md:mb-6">Settings</h1>
-
-            <div className="max-w-4xl mx-auto">
-              {/* Tabs */}
-              <div className="border-b border-gray-200 mb-6">
-                <nav className="-mb-px flex space-x-8">
+          <main className="flex-1 flex flex-col min-h-0 bg-gray-50">
+            <div className="sticky top-16 md:top-20 z-10 bg-gray-50 border-b border-gray-200">
+              <div className="max-w-4xl mx-auto px-4 md:px-6 pt-4 md:pt-6">
+                <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-4 md:mb-6">Settings</h1>
+                {/* Tabs */}
+                <nav className="-mb-px flex space-x-8 overflow-x-auto">
                   {tabs.map((tab) => (
                     <button
                       key={tab.id}
@@ -280,6 +442,10 @@ export default function SettingsPage() {
                   ))}
                 </nav>
               </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="max-w-4xl mx-auto p-4 md:p-6">
 
               {/* Tab Content */}
               <div className="space-y-6">
@@ -630,10 +796,340 @@ export default function SettingsPage() {
                     </Card>
                   </div>
                 )}
+
+                {/* Scope Types Tab */}
+                {activeTab === 'scope-types' && isAdmin && (
+                  <Card title="Scope Types">
+                      <div className="space-y-4">
+                        <p className="text-sm text-gray-600">
+                          Manage scope types that can be assigned to projects. Scope types are used when creating project scopes.
+                        </p>
+                        
+                        {/* Add New Scope Type */}
+                        <div className="border rounded-lg p-4 bg-gray-50">
+                          <h4 className="font-medium text-gray-900 mb-3">Add New Scope Type</h4>
+                          <div className="flex gap-3 items-end">
+                            <div className="flex-1">
+                              <Input
+                                label="Scope Type Name *"
+                                value={newScopeType.name}
+                                onChange={(e) => setNewScopeType({ name: e.target.value })}
+                                placeholder="e.g., CMU, BRICK, CAST STONE"
+                                required
+                                helpText="Display name (code will be auto-generated)"
+                              />
+                            </div>
+                            <Button
+                              onClick={handleCreateScopeType}
+                              isLoading={loadingScopeTypes}
+                              disabled={!newScopeType.name.trim()}
+                            >
+                              <PlusIcon className="h-4 w-4" />
+                              Add Scope Type
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Scope Types List */}
+                        {loadingScopeTypes ? (
+                          <LoadingSpinner />
+                        ) : (
+                          <div className="space-y-2">
+                            {scopeTypes.length > 0 ? (
+                              scopeTypes.map((st) => (
+                                <div key={st.id} className="flex items-center justify-between p-3 border rounded-lg bg-white">
+                                  {editingScopeType === st.id ? (
+                                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      <Input
+                                        value={st.name}
+                                        onChange={(e) => {
+                                          const updated = scopeTypes.map(s => 
+                                            s.id === st.id ? { ...s, name: e.target.value } : s
+                                          );
+                                          setScopeTypes(updated);
+                                        }}
+                                        placeholder="Name"
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <label className="flex items-center gap-2 text-sm">
+                                          <input
+                                            type="checkbox"
+                                            checked={st.is_active}
+                                            onChange={(e) => {
+                                              const updated = scopeTypes.map(s => 
+                                                s.id === st.id ? { ...s, is_active: e.target.checked } : s
+                                              );
+                                              setScopeTypes(updated);
+                                            }}
+                                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                                          />
+                                          <span>Active</span>
+                                        </label>
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleUpdateScopeType(st.id, {
+                                            name: st.name,
+                                            is_active: st.is_active
+                                          })}
+                                          isLoading={loadingScopeTypes}
+                                        >
+                                          <CheckIcon className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingScopeType(null);
+                                            // Reload to reset changes
+                                            api.get('/projects/scope-types/').then(res => {
+                                              setScopeTypes(res.data.results || res.data || []);
+                                            });
+                                          }}
+                                        >
+                                          <XMarkIcon className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex-1">
+                                        <span className="font-medium text-gray-900">{st.name}</span>
+                                        {!st.is_active && (
+                                          <span className="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">Inactive</span>
+                                        )}
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          onClick={() => setEditingScopeType(st.id)}
+                                        >
+                                          <PencilIcon className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="danger"
+                                          onClick={() => setDeleteScopeTypeId(st.id)}
+                                          isLoading={loadingScopeTypes}
+                                        >
+                                          <TrashIcon className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-gray-500 text-center py-4">No scope types defined</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                )}
+
+                {/* Foremen Tab */}
+                {activeTab === 'foremen' && isAdmin && (
+                  <Card title="Foremen">
+                    <div className="space-y-4">
+                      <p className="text-sm text-gray-600">
+                        Manage foremen that can be assigned to project scopes.
+                      </p>
+                      
+                      {/* Add New Foreman */}
+                      <div className="border rounded-lg p-4 bg-gray-50">
+                        <h4 className="font-medium text-gray-900 mb-3">Add New Foreman</h4>
+                        <div className="flex gap-3 items-end">
+                          <div className="flex-1">
+                            <Input
+                              label="Foreman Name *"
+                              value={newForeman.name}
+                              onChange={(e) => setNewForeman({ name: e.target.value })}
+                              placeholder="e.g., adam, enoch, eric"
+                              required
+                            />
+                          </div>
+                          <Button
+                            onClick={handleCreateForeman}
+                            isLoading={loadingForemen}
+                            disabled={!newForeman.name.trim()}
+                          >
+                            <PlusIcon className="h-4 w-4" />
+                            Add Foreman
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Foremen List */}
+                      {loadingForemen ? (
+                        <LoadingSpinner />
+                      ) : (
+                        <div className="space-y-2">
+                          {foremen.length > 0 ? (
+                            foremen.map((f) => (
+                              <div key={f.id} className="flex items-center justify-between p-3 border rounded-lg bg-white">
+                                {editingForeman === f.id ? (
+                                  <div className="flex-1 flex items-center gap-3">
+                                    <Input
+                                      value={f.name}
+                                      onChange={(e) => {
+                                        const updated = foremen.map(foreman => 
+                                          foreman.id === f.id ? { ...foreman, name: e.target.value } : foreman
+                                        );
+                                        setForemen(updated);
+                                      }}
+                                      placeholder="Foreman name"
+                                      className="flex-1"
+                                    />
+                                    <label className="flex items-center gap-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        checked={f.is_active}
+                                        onChange={(e) => {
+                                          const updated = foremen.map(foreman => 
+                                            foreman.id === f.id ? { ...foreman, is_active: e.target.checked } : foreman
+                                          );
+                                          setForemen(updated);
+                                        }}
+                                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                                      />
+                                      <span>Active</span>
+                                    </label>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleUpdateForeman(f.id, {
+                                        name: f.name,
+                                        is_active: f.is_active
+                                      })}
+                                      isLoading={loadingForemen}
+                                    >
+                                      <CheckIcon className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        setEditingForeman(null);
+                                        // Reload to reset changes
+                                        api.get('/projects/foremen/').then(res => {
+                                          setForemen(res.data.results || res.data || []);
+                                        });
+                                      }}
+                                    >
+                                      <XMarkIcon className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex-1">
+                                      <span className="font-medium text-gray-900">{f.name}</span>
+                                      {!f.is_active && (
+                                        <span className="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">Inactive</span>
+                                      )}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => setEditingForeman(f.id)}
+                                      >
+                                        <PencilIcon className="h-4 w-4" />
+                                      </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="danger"
+                                          onClick={() => setDeleteForemanId(f.id)}
+                                          isLoading={loadingForemen}
+                                        >
+                                          <TrashIcon className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-sm text-gray-500 text-center py-4">No foremen defined</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Delete Confirmation Modals */}
+                <Modal
+                  isOpen={deleteScopeTypeId !== null}
+                  onClose={() => setDeleteScopeTypeId(null)}
+                  title="Delete Scope Type"
+                  size="sm"
+                >
+                  <div className="space-y-4">
+                    <p className="text-gray-700">
+                      Are you sure you want to delete this scope type? This action will affect all projects using it and cannot be undone.
+                    </p>
+                    {deleteScopeTypeId && (
+                      <p className="text-sm font-medium text-gray-900">
+                        Scope Type: {scopeTypes.find(st => st.id === deleteScopeTypeId)?.name || 'Unknown'}
+                      </p>
+                    )}
+                    <div className="flex gap-3 justify-end pt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => setDeleteScopeTypeId(null)}
+                        disabled={loadingScopeTypes}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={handleDeleteScopeType}
+                        isLoading={loadingScopeTypes}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                </Modal>
+
+                <Modal
+                  isOpen={deleteForemanId !== null}
+                  onClose={() => setDeleteForemanId(null)}
+                  title="Delete Foreman"
+                  size="sm"
+                >
+                  <div className="space-y-4">
+                    <p className="text-gray-700">
+                      Are you sure you want to delete this foreman? This action will affect all projects using it and cannot be undone.
+                    </p>
+                    {deleteForemanId && (
+                      <p className="text-sm font-medium text-gray-900">
+                        Foreman: {foremen.find(f => f.id === deleteForemanId)?.name || 'Unknown'}
+                      </p>
+                    )}
+                    <div className="flex gap-3 justify-end pt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => setDeleteForemanId(null)}
+                        disabled={loadingForemen}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={handleDeleteForeman}
+                        isLoading={loadingForemen}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                </Modal>
               </div>
             </div>
-          </main>
-        </div>
+          </div>
+        </main>
+      </div>
       </div>
     </ProtectedRoute>
   );
