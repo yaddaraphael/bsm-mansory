@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import logging
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 
 from django.db import transaction
@@ -30,6 +31,19 @@ from projects.models import Project
 from branches.models import Branch
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_scope_key(value: str) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in value.upper() if ch.isalnum())
+
+
+def _to_decimal(value) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
 
 
 # ---------------------------------------------------------
@@ -87,6 +101,35 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
         # Role filter
         qs = filter_meetings_by_role(qs, user)
+
+        # Query param filters (list view only)
+        if self.action == "list":
+            params = self.request.query_params
+            status_param = (params.get("status") or "").upper()
+            if status_param in ["DRAFT", "COMPLETED"]:
+                qs = qs.filter(status=status_param)
+
+            branch_param = params.get("branch")
+            if branch_param:
+                qs = qs.filter(branch_id=branch_param)
+
+            date_from = params.get("date_from")
+            if date_from:
+                qs = qs.filter(meeting_date__gte=date_from)
+
+            date_to = params.get("date_to")
+            if date_to:
+                qs = qs.filter(meeting_date__lte=date_to)
+
+            search = (params.get("search") or "").strip()
+            if search:
+                qs = qs.filter(
+                    Q(notes__icontains=search)
+                    | Q(created_by__username__icontains=search)
+                    | Q(created_by__first_name__icontains=search)
+                    | Q(created_by__last_name__icontains=search)
+                    | Q(branch__name__icontains=search)
+                )
 
         # If detail/retrieve or export or jobs endpoints need deeper data:
         detail_actions = {
@@ -248,6 +291,194 @@ class MeetingViewSet(viewsets.ModelViewSet):
         return Response(ProjectSerializer(projects, many=True).data)
 
     # ---------------------------------------------------------
+    # /meetings/meetings/project_phases/?project_id=123
+    # ---------------------------------------------------------
+    @action(detail=False, methods=["get"], url_path="project_phases")
+    def project_phases(self, request):
+        project_id = request.query_params.get("project_id")
+        if not project_id:
+            return Response({"detail": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        phases = (
+            MeetingJobPhase.objects.filter(
+                meeting_job__project_id=project_id,
+                meeting_job__meeting__status="COMPLETED",
+            )
+            .select_related("meeting_job__meeting")
+            .order_by("meeting_job__meeting__meeting_date", "updated_at")
+        )
+
+        data = [
+            {
+                "phase_code": ph.phase_code,
+                "phase_description": ph.phase_description,
+                "quantity": ph.quantity,
+                "installed_quantity": ph.installed_quantity,
+                "percent_complete": ph.percent_complete,
+                "meeting_date": ph.meeting_job.meeting.meeting_date,
+                "updated_at": ph.updated_at,
+            }
+            for ph in phases
+        ]
+
+        return Response({"phases": data})
+
+    # ---------------------------------------------------------
+    # /meetings/meetings/batch_job_details/
+    # ---------------------------------------------------------
+    @action(detail=False, methods=["post"])
+    def batch_job_details(self, request):
+        """
+        Batch job details (dates + phases + scopes).
+        Optional meeting_id enables previous meeting calculations.
+        """
+        job_numbers = request.data.get("job_numbers", [])
+        if not isinstance(job_numbers, list):
+            return Response({"detail": "job_numbers array is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        job_numbers = [jn for jn in job_numbers if jn]
+        if not job_numbers:
+            return Response({})
+
+        meeting_id = request.data.get("meeting_id")
+
+        from spectrum.models import SpectrumJobDates, SpectrumPhaseEnhanced
+        from projects.serializers import ProjectScopeSerializer
+
+        # ---- meeting maps (previous + current) ----
+        prev_installed_map: dict[tuple[int, str], Decimal] = {}
+        curr_installed_map: dict[tuple[int, str], Decimal] = {}
+
+        def build_installed_map(meeting: Meeting | None) -> dict[tuple[int, str], Decimal]:
+            if not meeting:
+                return {}
+            installed_map: dict[tuple[int, str], Decimal] = {}
+            jobs = (
+                MeetingJob.objects.filter(meeting=meeting, project__job_number__in=job_numbers)
+                .prefetch_related("phases")
+            )
+            for mj in jobs:
+                for ph in mj.phases.all():
+                    key = (mj.project_id, _normalize_scope_key(ph.phase_code or ""))
+                    if not key[1]:
+                        continue
+                    installed_map[key] = _to_decimal(ph.installed_quantity)
+            return installed_map
+
+        if meeting_id:
+            current_meeting = get_object_or_404(Meeting, id=meeting_id)
+            previous_meeting = (
+                Meeting.objects.filter(
+                    meeting_date__lt=current_meeting.meeting_date,
+                    status="COMPLETED",
+                )
+                .order_by("-meeting_date")
+                .first()
+            )
+            prev_installed_map = build_installed_map(previous_meeting)
+            curr_installed_map = build_installed_map(current_meeting)
+
+        # ---- Spectrum dates ----
+        dates_qs = SpectrumJobDates.objects.filter(job_number__in=job_numbers)
+        dates_by_job = {d.job_number: d for d in dates_qs}
+
+        # ---- Spectrum phases ----
+        phases_qs = SpectrumPhaseEnhanced.objects.filter(job_number__in=job_numbers)
+        phases_by_job: dict[str, list[dict]] = {}
+        for ph in phases_qs:
+            phases_by_job.setdefault(ph.job_number, []).append(
+                {
+                    "phase_code": ph.phase_code,
+                    "description": ph.description,
+                    "jtd_quantity": ph.jtd_quantity,
+                    "estimated_quantity": ph.estimated_quantity,
+                    "start_date": ph.start_date,
+                    "end_date": ph.end_date,
+                }
+            )
+
+        # ---- Project scopes (with optional previous values) ----
+        projects = (
+            Project.objects.filter(job_number__in=job_numbers)
+            .prefetch_related("scopes__scope_type")
+        )
+        projects_by_job = {p.job_number: p for p in projects}
+
+        def scope_maps_for(project_id: int, scope_code: str, scope_name: str):
+            norm_code = _normalize_scope_key(scope_code)
+            norm_name = _normalize_scope_key(scope_name)
+            return norm_code, norm_name
+
+        def lookup_installed(
+            installed_map: dict[tuple[int, str], Decimal],
+            project_id: int,
+            norm_code: str,
+            norm_name: str,
+        ) -> Decimal:
+            val = installed_map.get((project_id, norm_code))
+            if val is not None:
+                return val
+            val = installed_map.get((project_id, norm_name))
+            if val is not None:
+                return val
+            if norm_code or norm_name:
+                for (pid, key), qty in installed_map.items():
+                    if pid != project_id:
+                        continue
+                    if norm_code and norm_code in key:
+                        return qty
+                    if norm_name and norm_name in key:
+                        return qty
+            return Decimal("0")
+
+        # ---- Build response ----
+        payload: dict[str, dict] = {}
+        for job_number in job_numbers:
+            details: dict[str, object] = {}
+
+            dates = dates_by_job.get(job_number)
+            if dates:
+                details["dates"] = {
+                    "start_date": dates.start_date,
+                    "est_start_date": dates.est_start_date,
+                    "complete_date": dates.complete_date,
+                    "projected_complete_date": dates.projected_complete_date,
+                    "est_complete_date": dates.est_complete_date,
+                }
+
+            if job_number in phases_by_job:
+                details["phases"] = phases_by_job[job_number]
+
+            project = projects_by_job.get(job_number)
+            if project:
+                scopes = ProjectScopeSerializer(project.scopes.all(), many=True).data
+
+                if meeting_id:
+                    for scope in scopes:
+                        scope_type_detail = scope.get("scope_type_detail") or {}
+                        scope_type_obj = scope.get("scope_type") if isinstance(scope.get("scope_type"), dict) else {}
+                        scope_code = scope_type_obj.get("code") or scope_type_detail.get("code") or ""
+                        scope_name = scope_type_obj.get("name") or scope_type_detail.get("name") or ""
+                        norm_code, norm_name = scope_maps_for(project.id, scope_code, scope_name)
+
+                        prev_installed = lookup_installed(prev_installed_map, project.id, norm_code, norm_name)
+                        curr_installed = lookup_installed(curr_installed_map, project.id, norm_code, norm_name)
+
+                        scope_qty = _to_decimal(scope.get("quantity", scope.get("qty_sq_ft", 0)))
+                        scope_installed = _to_decimal(scope.get("installed", 0))
+                        cumulative_before = scope_installed - curr_installed
+                        previous_balance = max(Decimal("0"), scope_qty - cumulative_before)
+
+                        scope["previous_meeting_installed"] = prev_installed
+                        scope["previous_balance"] = previous_balance
+
+                details["scopes"] = scopes
+
+            payload[job_number] = details
+
+        return Response(payload)
+
+    # ---------------------------------------------------------
     # /meetings/{id}/batch_save_jobs/
     # ---------------------------------------------------------
     @action(detail=True, methods=["post"])
@@ -342,6 +573,13 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     meeting.status = "COMPLETED"
                     meeting.save(update_fields=["status", "updated_at"])
                     self._send_meeting_notifications(meeting)
+                    try:
+                        from .signals import sync_meeting_phase_to_project_scope
+                        phases = MeetingJobPhase.objects.filter(meeting_job__meeting=meeting)
+                        for ph in phases:
+                            sync_meeting_phase_to_project_scope(ph)
+                    except Exception as e:
+                        logger.error("Error syncing phases on meeting complete: %s", e, exc_info=True)
 
                 saved = (
                     MeetingJob.objects.filter(id__in=saved_job_ids)

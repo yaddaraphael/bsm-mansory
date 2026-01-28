@@ -19,6 +19,10 @@ def sync_meeting_phase_to_project_scope(meeting_job_phase):
     import logging
     logger = logging.getLogger(__name__)
     
+    meeting = meeting_job_phase.meeting_job.meeting
+    if meeting.status != "COMPLETED":
+        return
+
     project = meeting_job_phase.meeting_job.project
     
     # Try to find matching ProjectScope
@@ -103,6 +107,9 @@ def sync_phase_on_save(sender, instance, **kwargs):
 @receiver(post_delete, sender=MeetingJobPhase)
 def sync_phase_on_delete(sender, instance, **kwargs):
     """Re-sync remaining phases when one is deleted."""
+    meeting = instance.meeting_job.meeting
+    if meeting.status != "COMPLETED":
+        return
     # Re-sync all phases for this project to ensure consistency
     project = instance.meeting_job.project
     for phase in MeetingJobPhase.objects.filter(meeting_job__project=project):

@@ -1024,7 +1024,8 @@ class BranchPortalProjectListView(generics.ListAPIView):
         # Return public projects for this branch/division
         # Filter by both branch and spectrum_division_code to ensure each division only sees their own projects
         return Project.objects.filter(
-            is_public=True
+            is_public=True,
+            status="ACTIVE",
         ).filter(
             Q(branch=branch) | Q(spectrum_division_code=division_code)
         ).order_by('-updated_at')
@@ -1103,6 +1104,8 @@ class HQPortalProjectListView(generics.ListAPIView):
                 ),
             )
         )
+
+        qs = qs.filter(status="ACTIVE")
 
         if public_only:
             qs = qs.filter(is_public=True)
@@ -1222,4 +1225,3 @@ def get_hq_portal_password_status(request):
     return Response({
         'has_password': bool(hq_password),
     })
-

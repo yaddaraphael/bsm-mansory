@@ -189,47 +189,53 @@ export default function HQPortalPage() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PENDING'>('ALL');
   const [divisionFilter, setDivisionFilter] = useState<string>('ALL');
 
-  // Load saved password and auto-fetch
-  useEffect(() => {
-    const savedPassword = sessionStorage.getItem('hq_portal_password');
-    if (savedPassword) {
-      setPassword(savedPassword);
-      void fetchProjects(savedPassword);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   /**
    * IMPORTANT: We explicitly request "all divisions" and "include progress".
    * If your backend supports any of these flags, it will stop scoping to one branch.
    * If not, backend will ignore unknown params (safe).
    */
+  const fetchAllProjects = useCallback(async (pwd: string): Promise<Project[]> => {
+    const API_URL = getApiBaseUrl();
+    const baseUrl = `${API_URL}/projects/public/hq/projects/`;
+    const params = {
+      password: pwd,
+      all_divisions: 1,
+      include_all: 1,
+      division: 'ALL',
+      branch: 'ALL',
+      include_progress: 1,
+      include_scopes: 1,
+      page_size: 500,
+      page: 1,
+    };
+
+    const collected: Project[] = [];
+    let nextUrl: string | null = baseUrl;
+    let first = true;
+
+    while (nextUrl) {
+      const response = await axios.get(nextUrl, {
+        params: first ? params : undefined,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      first = false;
+
+      const data = response.data as { results?: Project[]; next?: string | null };
+      const pageProjects = normalizeProjectsPayload(data);
+      collected.push(...pageProjects);
+      nextUrl = data?.next || null;
+    }
+
+    return collected;
+  }, []);
+
   const fetchProjects = useCallback(async (pwd: string) => {
     setLoading(true);
     setError(null);
     setAuthenticated(false);
 
     try {
-      const API_URL = getApiBaseUrl();
-
-      const response = await axios.get(`${API_URL}/projects/public/hq/projects/`, {
-        params: {
-          password: pwd,
-
-          // force ALL divisions (backend can use any of these)
-          all_divisions: 1,
-          include_all: 1,
-          division: 'ALL',
-          branch: 'ALL',
-
-          // ask for progress/scopes if backend can provide it
-          include_progress: 1,
-          include_scopes: 1,
-        },
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      const projectsData = normalizeProjectsPayload(response.data);
+      const projectsData = await fetchAllProjects(pwd);
 
       setAllProjects(projectsData);
       setAuthenticated(true);
@@ -257,6 +263,16 @@ export default function HQPortalPage() {
     } finally {
       setLoading(false);
     }
+  }, [fetchAllProjects]);
+
+  // Load saved password and auto-fetch
+  useEffect(() => {
+    const savedPassword = sessionStorage.getItem('hq_portal_password');
+    if (savedPassword) {
+      setPassword(savedPassword);
+      void fetchProjects(savedPassword);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -272,23 +288,8 @@ export default function HQPortalPage() {
     try {
       // Refresh all projects to get latest scopes/progress for ALL divisions
       try {
-        const API_URL = getApiBaseUrl();
         const savedPassword = sessionStorage.getItem('hq_portal_password') || '';
-
-        const refreshed = await axios.get(`${API_URL}/projects/public/hq/projects/`, {
-          params: {
-            password: savedPassword,
-            all_divisions: 1,
-            include_all: 1,
-            division: 'ALL',
-            branch: 'ALL',
-            include_progress: 1,
-            include_scopes: 1,
-          },
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        const refreshedProjects = normalizeProjectsPayload(refreshed.data);
+        const refreshedProjects = await fetchAllProjects(savedPassword);
         setAllProjects(refreshedProjects);
 
         const updated = refreshedProjects.find((p) => p.id === project.id);

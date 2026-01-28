@@ -189,6 +189,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [foremen, setForemen] = useState<Foreman[]>([]);
   const [showAddScopeModal, setShowAddScopeModal] = useState(false);
   const [newScope, setNewScope] = useState<Partial<ProjectScope>>({});
+  const [installedByScope, setInstalledByScope] = useState<Record<number, number>>({});
   
   const canEditDelete = user?.role === 'ROOT_SUPERADMIN';
   const canEditPhases = ['ROOT_SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER'].includes(user?.role || '');
@@ -228,7 +229,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       
       try {
         const response = await api.get(`/meetings/meetings/project_phases/?project_id=${project.id}`);
-        setMeetingPhases(response.data.phases || []);
+        const phases = response.data.phases || [];
+        setMeetingPhases(phases);
       } catch (err) {
         console.error('Failed to fetch meeting phases:', err);
         setMeetingPhases([]);
@@ -239,6 +241,44 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       fetchMeetingPhases();
     }
   }, [project]);
+
+  useEffect(() => {
+    if (!project?.scopes || meetingPhases.length === 0) {
+      setInstalledByScope({});
+      return;
+    }
+
+    const map: Record<number, number> = {};
+    for (const scope of project.scopes) {
+      const scopeTypeName = typeof scope.scope_type === 'object' && scope.scope_type?.name 
+        ? scope.scope_type.name 
+        : (scope.scope_type_detail?.name || String(scope.scope_type || ''));
+
+      if (!scopeTypeName) continue;
+
+      const matching = meetingPhases.filter((phase: MeetingPhase) =>
+        phase.phase_code && (
+          phase.phase_code.toUpperCase().includes(scopeTypeName.toUpperCase()) ||
+          scopeTypeName.toUpperCase().includes(phase.phase_code.toUpperCase())
+        )
+      );
+
+      const sorted = [...matching].sort((a, b) => {
+        const aDate = a.meeting_date || a.updated_at || '';
+        const bDate = b.meeting_date || b.updated_at || '';
+        return new Date(aDate).getTime() - new Date(bDate).getTime();
+      });
+
+      const installedValues = sorted.map((p) => Number(p.installed_quantity || 0));
+      const installedTotal = installedValues.length
+        ? installedValues.reduce((a, b) => a + b, 0)
+        : Number(scope.installed || 0);
+
+      map[scope.id] = installedTotal;
+    }
+
+    setInstalledByScope(map);
+  }, [project?.scopes, meetingPhases]);
 
   // Fetch scope types and foremen
   useEffect(() => {
@@ -660,53 +700,67 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
                 <Card title="Progress">
                   <div className="space-y-4 md:space-y-6 w-full">
-                    <div>
-                      <div className="flex justify-between items-center mb-3">
-                        <span className="text-sm font-medium text-gray-700">Production Progress</span>
-                        <span className="text-lg font-bold text-primary">
-                          {project.production_percent_complete?.toFixed(1) || 0}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-3">
-                        <div
-                          className="bg-primary h-3 rounded-full transition-all duration-300"
-                          style={{ width: `${Math.min(project.production_percent_complete || 0, 100)}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                    {canViewFinancial && (
-                      <div>
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-sm font-medium text-gray-700">Financial Progress</span>
-                          <span className="text-lg font-bold text-blue-600">
-                            {project.financial_percent_complete?.toFixed(1) || 0}%
-                          </span>
+                    {(() => {
+                      const totalQty = (project.scopes || []).reduce(
+                        (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                        0
+                      );
+                      const totalInstalled = (project.scopes || []).reduce((acc, s) => {
+                        const scoped = installedByScope[s.id];
+                        return acc + Number(scoped ?? s.installed ?? 0);
+                      }, 0);
+                      const percent = totalQty > 0 ? (totalInstalled / totalQty) * 100 : 0;
+
+                      return (
+                        <div>
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-sm font-medium text-gray-700">Production Progress</span>
+                            <span className="text-lg font-bold text-primary">
+                              {percent.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div
+                              className="bg-primary h-3 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.min(percent, 100)}%` }}
+                            ></div>
+                          </div>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-3">
-                          <div
-                            className="bg-blue-500 h-3 rounded-full transition-all duration-300"
-                            style={{ width: `${Math.min(project.financial_percent_complete || 0, 100)}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                     <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200">
                       <div className="text-center">
                         <label className="text-xs font-medium text-gray-500 block mb-1">Total Quantity</label>
                         <p className="text-xl font-bold text-gray-900">
-                          {project.total_quantity || 0}
+                          {(project.scopes || []).reduce(
+                            (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                            0
+                          )}
                         </p>
                       </div>
                       <div className="text-center">
                         <label className="text-xs font-medium text-gray-500 block mb-1">Installed</label>
                         <p className="text-xl font-bold text-green-600">
-                          {project.total_installed || 0}
+                          {(project.scopes || []).reduce((acc, s) => {
+                            const scoped = installedByScope[s.id];
+                            return acc + Number(scoped ?? s.installed ?? 0);
+                          }, 0)}
                         </p>
                       </div>
                       <div className="text-center">
                         <label className="text-xs font-medium text-gray-500 block mb-1">Remaining</label>
                         <p className="text-xl font-bold text-orange-600">
-                          {project.remaining || 0}
+                          {(() => {
+                            const totalQty = (project.scopes || []).reduce(
+                              (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                              0
+                            );
+                            const totalInstalled = (project.scopes || []).reduce((acc, s) => {
+                              const scoped = installedByScope[s.id];
+                              return acc + Number(scoped ?? s.installed ?? 0);
+                            }, 0);
+                            return Math.max(0, totalQty - totalInstalled);
+                          })()}
                         </p>
                       </div>
                     </div>
@@ -739,18 +793,24 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           ? scope.scope_type.id
                           : (scope.scope_type_id || scope.scope_type_detail?.id);
                         
-                        // Find matching meeting phase for installed quantity updates
-                        const matchingMeetingPhase = meetingPhases.find((phase: MeetingPhase) => 
+                        // Find matching meeting phases for installed quantity updates
+                        const matchingMeetingPhases = meetingPhases.filter((phase: MeetingPhase) =>
                           phase.phase_code && scopeTypeName && (
                             phase.phase_code.toUpperCase().includes(scopeTypeName.toUpperCase()) ||
                             scopeTypeName.toUpperCase().includes(phase.phase_code.toUpperCase())
                           )
                         );
-                        
+
                         const totalQuantity = scope.qty_sq_ft ?? scope.quantity ?? 0;
-                        const installedFromMeetings = matchingMeetingPhase?.installed_quantity ?? scope.installed ?? 0;
+                        const installedFromMeetings = installedByScope[scope.id] ?? scope.installed ?? 0;
+
                         const balance = Math.max(totalQuantity - installedFromMeetings, 0);
-                        const percentComplete = scope.percent_complete ?? (totalQuantity > 0 ? (installedFromMeetings / totalQuantity) * 100 : 0);
+                        const percentComplete = totalQuantity > 0 ? (installedFromMeetings / totalQuantity) * 100 : 0;
+                        const latestMeetingPhase = matchingMeetingPhases.reduce<MeetingPhase | undefined>((acc, cur) => {
+                          const aDate = acc?.meeting_date || acc?.updated_at || '';
+                          const bDate = cur.meeting_date || cur.updated_at || '';
+                          return !acc || new Date(bDate).getTime() > new Date(aDate).getTime() ? cur : acc;
+                        }, undefined);
                         
                         const isEditing = editingScope === scope.id;
                         const updates = scopeUpdates[scope.id] || {};
@@ -766,9 +826,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                                 {scope.foreman_detail?.name && (
                                   <p className="text-xs text-blue-600 mt-1">Foreman: {scope.foreman_detail.name}</p>
                                 )}
-                                {matchingMeetingPhase?.meeting_date && (
+                                {latestMeetingPhase?.meeting_date && (
                                   <p className="text-xs text-green-600 mt-1">
-                                    Last meeting update: {new Date(matchingMeetingPhase.meeting_date).toLocaleDateString()}
+                                    Last meeting update: {new Date(latestMeetingPhase.meeting_date).toLocaleDateString()}
                                   </p>
                                 )}
                               </div>
@@ -1025,7 +1085,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                                     <p className="text-lg md:text-xl font-bold text-green-600">
                                       {installedFromMeetings.toLocaleString()}
                                     </p>
-                                    {matchingMeetingPhase && (
+                                    {latestMeetingPhase && (
                                       <p className="text-xs text-green-600 mt-1">From meetings</p>
                                     )}
                                   </div>
@@ -1074,7 +1134,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                                           </p>
                                         </div>
                                       )}
-                                      {scope.duration_days && (
+                                      {Number(scope.duration_days) > 0 && (
                                         <div>
                                           <span className="text-xs font-medium text-gray-500">Duration</span>
                                           <p className="text-sm font-medium text-gray-900">{scope.duration_days} days</p>
@@ -1111,15 +1171,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       })
                     ) : (
                       <div className="text-center py-12">
-                        <p className="text-gray-500 mb-4">No scopes defined for this project</p>
-                        {canEditPhases && !isReadOnly && (
-                          <Button
-                            variant="secondary"
-                            onClick={() => setShowAddScopeModal(true)}
-                          >
-                            Add First Scope
-                          </Button>
-                        )}
+                        <p className="text-gray-500">No scopes defined for this project</p>
                       </div>
                     )}
                   </div>
@@ -1298,101 +1350,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               </div>
 
               <div className="space-y-4 md:space-y-6 w-full">
-                <Card title="Team">
-                  <div className="space-y-4">
-                    {project.project_manager && (
-                      <div 
-                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/users/${project.project_manager}`)}
-                      >
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Project Manager</label>
-                        <p className="text-base font-semibold text-primary hover:underline">
-                          {project.project_manager_detail?.first_name || ''}{' '}
-                          {project.project_manager_detail?.last_name || ''}
-                        </p>
-                        {project.project_manager_detail?.email && (
-                          <p className="text-sm text-gray-500 mt-1">{project.project_manager_detail.email}</p>
-                        )}
-                      </div>
-                    )}
-                    {project.superintendent && (
-                      <div 
-                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/users/${project.superintendent}`)}
-                      >
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Superintendent</label>
-                        <p className="text-base font-semibold text-primary hover:underline">
-                          {project.superintendent_detail?.first_name || ''}{' '}
-                          {project.superintendent_detail?.last_name || ''}
-                        </p>
-                        {project.superintendent_detail?.email && (
-                          <p className="text-sm text-gray-500 mt-1">{project.superintendent_detail.email}</p>
-                        )}
-                      </div>
-                    )}
-                    {project.foreman && (
-                      <div 
-                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/users/${project.foreman}`)}
-                      >
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Foreman</label>
-                        <p className="text-base font-semibold text-primary hover:underline">
-                          {project.foreman_detail?.first_name || ''}{' '}
-                          {project.foreman_detail?.last_name || ''}
-                        </p>
-                        {project.foreman_detail?.email && (
-                          <p className="text-sm text-gray-500 mt-1">{project.foreman_detail.email}</p>
-                        )}
-                      </div>
-                    )}
-                    {project.general_contractor && (
-                      <div 
-                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/users/${project.general_contractor}`)}
-                      >
-                        <label className="text-xs font-medium text-gray-500 block mb-1">General Contractor</label>
-                        <p className="text-base font-semibold text-primary hover:underline">
-                          {project.general_contractor_detail?.first_name || ''}{' '}
-                          {project.general_contractor_detail?.last_name || ''}
-                        </p>
-                        {project.general_contractor_detail?.email && (
-                          <p className="text-sm text-gray-500 mt-1">{project.general_contractor_detail.email}</p>
-                        )}
-                      </div>
-                    )}
-                    {!project.project_manager && !project.superintendent && !project.foreman && !project.general_contractor && (
-                      <p className="text-sm text-gray-500 text-center py-4">No team members assigned</p>
-                    )}
-                  </div>
-                </Card>
-
-                {canViewFinancial && (
-                  <Card title="Financial">
-                    <div className="space-y-4">
-                      <div className="p-4 bg-blue-50 rounded-lg">
-                        <label className="text-xs font-medium text-gray-500 block mb-2">Contract Value</label>
-                        <p className="text-2xl font-bold text-blue-700">
-                          ${project.contract_value?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                        </p>
-                      </div>
-                      <div className="p-4 bg-gray-50 rounded-lg">
-                        <label className="text-xs font-medium text-gray-500 block mb-2">Contract Balance</label>
-                        <p className="text-2xl font-bold text-gray-700">
-                          ${project.contract_balance?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
-                        </p>
-                      </div>
-                      {project.contract_value && project.contract_balance && (
-                        <div className="p-4 bg-green-50 rounded-lg">
-                          <label className="text-xs font-medium text-gray-500 block mb-2">Estimated Revenue</label>
-                          <p className="text-2xl font-bold text-green-700">
-                            ${(Number(project.contract_value) - Number(project.contract_balance)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                )}
-
                 <Card title="Project Information">
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between py-2 border-b border-gray-100">
@@ -1684,4 +1641,3 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     </ProtectedRoute>
   );
 }
-

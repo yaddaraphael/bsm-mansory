@@ -38,6 +38,7 @@ interface Meeting {
   notes: string | null;
   meeting_jobs_count: number;
   created_at: string;
+  status?: string;
 }
 
 type Branch = { id: number; name: string };
@@ -102,6 +103,7 @@ export default function MeetingsPage() {
   const [loading, setLoading] = useState(true);
   const [branchesLoading, setBranchesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Filters (server-side)
   const [searchTerm, setSearchTerm] = useState('');
@@ -110,10 +112,12 @@ export default function MeetingsPage() {
   const [filterBranch, setFilterBranch] = useState<number | null>(null);
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'ALL' | 'DRAFT' | 'COMPLETED'>('ALL');
 
   // Pagination (server-side)
   const [currentPage, setCurrentPage] = useState(1);
   const [meetingsPerPage, setMeetingsPerPage] = useState(50);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -165,7 +169,13 @@ export default function MeetingsPage() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, filterBranch, filterDateFrom, filterDateTo, meetingsPerPage]);
+  }, [debouncedSearch, filterBranch, filterDateFrom, filterDateTo, filterStatus, meetingsPerPage]);
+
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => setSuccess(null), 3000);
+    return () => clearTimeout(t);
+  }, [success]);
 
   // Fetch meetings whenever filters/page change (server-side)
   useEffect(() => {
@@ -173,6 +183,7 @@ export default function MeetingsPage() {
       try {
         setLoading(true);
         setError(null);
+        setSuccess(null);
 
         // cancel old request
         abortRef.current?.abort();
@@ -189,6 +200,7 @@ export default function MeetingsPage() {
         if (filterBranch) params.branch = filterBranch;
         if (filterDateFrom) params.date_from = filterDateFrom;
         if (filterDateTo) params.date_to = filterDateTo;
+        if (filterStatus !== 'ALL') params.status = filterStatus;
 
         const res = await api.get<DRFPage<Meeting> | Meeting[]>('/meetings/meetings/', {
           params,
@@ -227,6 +239,8 @@ export default function MeetingsPage() {
     filterBranch,
     filterDateFrom,
     filterDateTo,
+    filterStatus,
+    refreshKey,
   ]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(totalCount / meetingsPerPage)), [totalCount, meetingsPerPage]);
@@ -326,6 +340,8 @@ export default function MeetingsPage() {
       setShowDeleteModal(false);
       setMeetingToDelete(null);
       setCurrentPage(1);
+      setRefreshKey((k) => k + 1);
+      setSuccess('Meeting deleted successfully.');
     } catch (err: unknown) {
       const msg = getErrorMessage(err, 'Failed to delete meeting');
       setError(msg);
@@ -372,6 +388,11 @@ export default function MeetingsPage() {
                     {error}
                   </div>
                 )}
+                {success && (
+                  <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+                    {success}
+                  </div>
+                )}
 
                 {/* Search and Filters */}
                 <div className="mb-2 space-y-2">
@@ -386,24 +407,34 @@ export default function MeetingsPage() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <select
-                      value={filterBranch || ''}
-                      onChange={(e) => setFilterBranch(e.target.value ? parseInt(e.target.value, 10) : null)}
-                      disabled={branchesLoading}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
-                    >
-                      <option value="">All Branches</option>
-                      {branches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <select
+                    value={filterBranch || ''}
+                    onChange={(e) => setFilterBranch(e.target.value ? parseInt(e.target.value, 10) : null)}
+                    disabled={branchesLoading}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                  >
+                    <option value="">All Branches</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
 
-                    <Input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className="text-sm" />
-                    <Input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className="text-sm" />
-                  </div>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value as 'ALL' | 'DRAFT' | 'COMPLETED')}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                  >
+                    <option value="ALL">All Statuses</option>
+                    <option value="DRAFT">Draft</option>
+                    <option value="COMPLETED">Completed</option>
+                  </select>
+
+                  <Input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className="text-sm" />
+                  <Input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className="text-sm" />
+                </div>
                 </div>
 
                 {/* Pagination Info */}
@@ -458,6 +489,17 @@ export default function MeetingsPage() {
                                     day: 'numeric',
                                   })}
                                 </h3>
+                                {meeting.status && (
+                                  <span
+                                    className={`px-1.5 py-0.5 text-xs font-medium rounded flex-shrink-0 ${
+                                      meeting.status === 'COMPLETED'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-yellow-100 text-yellow-800'
+                                    }`}
+                                  >
+                                    {meeting.status === 'COMPLETED' ? 'Completed' : 'Draft'}
+                                  </span>
+                                )}
                                 {meeting.week_number && (
                                   <span className="px-1.5 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded flex-shrink-0">
                                     Week {meeting.week_number}

@@ -58,6 +58,8 @@ interface ProjectScope {
   percent_complete?: number;
   foreman?: number | { id: number; name: string } | null;
   foreman_detail?: { id: number; name: string };
+  previous_meeting_installed?: number;
+  previous_balance?: number;
 }
 
 interface Project {
@@ -124,6 +126,7 @@ interface JobDetails {
     start_date?: string;
     end_date?: string;
   }>;
+  scopes?: ProjectScope[];
 }
 
 interface ExistingJob {
@@ -164,6 +167,8 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 const scopeKey = (projectId: number, scopeCode: string) => `${projectId}__${scopeCode}`;
 
+const normalizeScopeKey = (value?: string) => (value ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : '');
+
 const safeNumber = (v: unknown, fallback = 0) => {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -184,11 +189,13 @@ const branchDisplay = (p?: Project) => p?.branch_detail?.name || p?.branch?.name
 
 const scopeTypeCodeOf = (scope: ProjectScope, scopeTypes: ScopeType[]) => {
   if (typeof scope.scope_type === 'object') return scope.scope_type.code;
+  if (scope.scope_type_detail?.code) return scope.scope_type_detail.code;
   return scopeTypes.find((st) => st.id === scope.scope_type)?.code || '';
 };
 
 const scopeTypeNameOf = (scope: ProjectScope, scopeTypes: ScopeType[]) => {
   if (typeof scope.scope_type === 'object') return scope.scope_type.name;
+  if (scope.scope_type_detail?.name) return scope.scope_type_detail.name;
   return scopeTypes.find((st) => st.id === scope.scope_type)?.name || '';
 };
 
@@ -216,6 +223,9 @@ export default function MeetingReviewPage() {
   // previous meeting tracking: key = `${projectId}_${scopeCodeOrName}`
   const [previousMeetingData, setPreviousMeetingData] = useState<
     Record<string, { installed_quantity: number; masons: number; operators: number; labors: number }>
+  >({});
+  const batchScopeMapRef = useRef<
+    Record<string, Record<string, { previous_meeting_installed?: number; previous_balance?: number }>>
   >({});
 
   // UI state
@@ -255,9 +265,12 @@ export default function MeetingReviewPage() {
   const fetchScopeTypes = useCallback(async () => {
     try {
       const res = await api.get('/projects/scope-types/');
-      setScopeTypes(res.data.results || res.data || []);
+      const data = res.data.results || res.data || [];
+      setScopeTypes(data);
+      return data as ScopeType[];
     } catch (e) {
       console.error('Error fetching scope types:', e);
+      return [] as ScopeType[];
     }
   }, []);
 
@@ -343,9 +356,10 @@ export default function MeetingReviewPage() {
 
     try {
       // ensure scope types loaded once (for codes/names)
+      let effectiveScopeTypes = scopeTypes;
       if (scopeTypes.length === 0) {
         setLoadingMessage('Loading scope types…');
-        await fetchScopeTypes();
+        effectiveScopeTypes = await fetchScopeTypes();
       }
 
       setLoadingMessage('Loading meeting header…');
@@ -375,7 +389,7 @@ export default function MeetingReviewPage() {
         try {
           const batchRes = await api.post<Record<string, JobDetails>>(
             '/meetings/meetings/batch_job_details/', // ✅ keep trailing slash
-            { job_numbers: jobNumbers },
+            { job_numbers: jobNumbers, meeting_id: parseInt(meetingId, 10) },
             { signal: controller.signal as unknown as AbortSignal },
           );
           batchDetails = batchRes.data || {};
@@ -384,6 +398,29 @@ export default function MeetingReviewPage() {
           console.error('batch_job_details failed:', e);
         }
       }
+
+      // backend previous meeting lookup (by job number + normalized scope key)
+      const batchScopeLookup: Record<string, Record<string, { previous_meeting_installed?: number; previous_balance?: number }>> =
+        {};
+      for (const [jobNumber, details] of Object.entries(batchDetails)) {
+        const scopes = details.scopes || [];
+        if (!scopes.length) continue;
+        const map: Record<string, { previous_meeting_installed?: number; previous_balance?: number }> = {};
+        for (const sc of scopes) {
+          const code = scopeTypeCodeOf(sc, effectiveScopeTypes);
+          const name = scopeTypeNameOf(sc, effectiveScopeTypes);
+          const key1 = normalizeScopeKey(code);
+          const key2 = normalizeScopeKey(name);
+          const entry = {
+            previous_meeting_installed: sc.previous_meeting_installed,
+            previous_balance: sc.previous_balance,
+          };
+          if (key1) map[key1] = entry;
+          if (key2) map[key2] = entry;
+        }
+        batchScopeLookup[jobNumber] = map;
+      }
+      batchScopeMapRef.current = batchScopeLookup;
 
       // Load scopes ONLY for projects that have existing meeting entries (fast initial load)
       const existingProjectIds = new Set<number>(
@@ -401,7 +438,21 @@ export default function MeetingReviewPage() {
                 signal: controller.signal as unknown as AbortSignal,
               });
               const scopes = (pr.data?.scopes || []) as ProjectScope[];
-              projectScopesMap[j.id] = scopes.filter((s) => scopeBelongsToProject(s, j.id));
+              const filtered = scopes.filter((s) => scopeBelongsToProject(s, j.id));
+              const lookup = batchScopeLookup[j.job_number] || {};
+              projectScopesMap[j.id] = filtered.map((s) => {
+                const code = scopeTypeCodeOf(s, effectiveScopeTypes);
+                const name = scopeTypeNameOf(s, effectiveScopeTypes);
+                const key1 = normalizeScopeKey(code);
+                const key2 = normalizeScopeKey(name);
+                const match = (key1 && lookup[key1]) || (key2 && lookup[key2]);
+                if (!match) return s;
+                return {
+                  ...s,
+                  previous_meeting_installed: match.previous_meeting_installed,
+                  previous_balance: match.previous_balance,
+                };
+              });
             } catch (e) {
               console.error(`scope fetch failed for project ${j.id}:`, e);
               projectScopesMap[j.id] = [];
@@ -426,7 +477,9 @@ export default function MeetingReviewPage() {
           const allMeetings: Meeting[] = allMeetingsRes.data?.results || allMeetingsRes.data || [];
           const currentDate = new Date(currentMeetingDate);
 
-          const prevMeeting = allMeetings.find((m) => new Date(m.meeting_date) < currentDate);
+          const prevMeeting = allMeetings.find(
+            (m) => m.status === 'COMPLETED' && new Date(m.meeting_date) < currentDate,
+          );
           if (prevMeeting?.id) {
             const prevJobsRes = await api.get(`/meetings/meetings/${prevMeeting.id}/jobs/`, {
               signal: controller.signal as unknown as AbortSignal,
@@ -457,7 +510,7 @@ export default function MeetingReviewPage() {
       // Build jobs array
       setLoadingMessage('Preparing jobs…');
 
-      const loadedScopeTypes = scopeTypes.length ? scopeTypes : []; // may still be empty in edge cases
+      const loadedScopeTypes = effectiveScopeTypes.length ? effectiveScopeTypes : scopeTypes; // may still be empty in edge cases
 
       const jobs: MeetingJob[] = activeJobs.map((job) => {
         const existing = existingJobs.find((ej) => {
@@ -499,23 +552,28 @@ export default function MeetingReviewPage() {
 
           const ex = code ? existingMap.get(code) : undefined;
 
+          const prev1 = prevMap[`${job.id}_${code}`];
+          const backendPrev = sc.previous_meeting_installed;
+          const baselineInstalled =
+            backendPrev !== undefined ? safeNumber(backendPrev, 0) : prev1?.installed_quantity ?? 0;
+
           if (ex) {
+            const rawInstalled = safeNumber(ex.installed_quantity, baselineInstalled);
+            const correctedInstalled =
+              rawInstalled < baselineInstalled ? baselineInstalled + rawInstalled : rawInstalled;
             phases.push({
               ...ex,
               phase_code: code,
               phase_description: desc || ex.phase_description,
               quantity: safeNumber(sc.qty_sq_ft, ex.quantity),
               // keep meeting’s stored installed_total (cumulative) if exists
-              installed_quantity: safeNumber(ex.installed_quantity, 0),
+              installed_quantity: correctedInstalled,
               masons: safeNumber(ex.masons, safeNumber(sc.masons, 0)),
               operators: safeNumber(ex.operators, safeNumber(sc.operators, 0)),
               labors: safeNumber(ex.labors, safeNumber(sc.tenders, 0)),
             });
           } else {
             // baseline installed from previous meeting
-            const prev1 = prevMap[`${job.id}_${code}`];
-            const baselineInstalled = prev1?.installed_quantity ?? 0;
-
             phases.push({
               phase_code: code,
               phase_description: desc,
@@ -668,9 +726,24 @@ export default function MeetingReviewPage() {
           const pr = await api.get(`/projects/projects/${projectId}/`);
           const scopes = (pr.data?.scopes || []) as ProjectScope[];
           const filteredScopes = scopes.filter((s) => scopeBelongsToProject(s, projectId));
+          const jobNumber = job.project?.job_number || '';
+          const lookup = batchScopeMapRef.current[jobNumber] || {};
+          const mergedScopes = filteredScopes.map((s) => {
+            const code = scopeTypeCodeOf(s, scopeTypes);
+            const name = scopeTypeNameOf(s, scopeTypes);
+            const key1 = normalizeScopeKey(code);
+            const key2 = normalizeScopeKey(name);
+            const match = (key1 && lookup[key1]) || (key2 && lookup[key2]);
+            if (!match) return s;
+            return {
+              ...s,
+              previous_meeting_installed: match.previous_meeting_installed,
+              previous_balance: match.previous_balance,
+            };
+          });
 
           setAllMeetingJobs((prev) => {
-            const updated = prev.map((j) => (j.project_id === projectId ? { ...j, projectScopes: filteredScopes } : j));
+            const updated = prev.map((j) => (j.project_id === projectId ? { ...j, projectScopes: mergedScopes } : j));
             return updated;
           });
         } catch (e) {
@@ -678,7 +751,7 @@ export default function MeetingReviewPage() {
         }
       }
     },
-    [allMeetingJobs],
+    [allMeetingJobs, scopeTypes],
   );
 
   // ---------------- Save (draft + complete) ----------------
@@ -705,7 +778,7 @@ export default function MeetingReviewPage() {
           operators: p.operators || 0,
           labors: p.labors || 0,
           quantity: round2(p.quantity || 0),
-          installed_quantity: round2(p.installed_quantity || 0), // cumulative total installed
+          installed_quantity: round2(Math.min(p.quantity || 0, p.installed_quantity || 0)), // cumulative total installed
           duration: p.duration ?? null,
           notes: p.notes || '',
         })),
@@ -748,23 +821,52 @@ export default function MeetingReviewPage() {
     }
   }, [meetingId, buildJobsToSave, router]);
 
-  // auto-save draft every 30s
-  useEffect(() => {
-    if (!meetingId || allMeetingJobs.length === 0) return;
-
-    const t = setInterval(async () => {
+  const saveDraft = useCallback(
+    async (silent = true) => {
+      if (!meetingId || allMeetingJobs.length === 0) return;
       try {
         await api.post(`/meetings/meetings/${meetingId}/batch_save_jobs/`, {
           jobs: buildJobsToSave(),
           is_draft: true,
         });
       } catch (e) {
-        console.error('Auto-save failed:', e);
+        if (!silent) {
+          console.error('Draft save failed:', e);
+        }
       }
+    },
+    [meetingId, allMeetingJobs.length, buildJobsToSave],
+  );
+
+  // auto-save draft every 30s
+  useEffect(() => {
+    const t = setInterval(async () => {
+      await saveDraft();
     }, 30000);
 
     return () => clearInterval(t);
-  }, [meetingId, allMeetingJobs.length, buildJobsToSave]);
+  }, [saveDraft]);
+
+  // save draft when tab/window is hidden or page is unloading
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        void saveDraft(true);
+      }
+    };
+
+    const handlePageHide = () => {
+      void saveDraft(true);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [saveDraft]);
 
   // ---------------- Rendering helpers ----------------
   const renderScopes = (job: MeetingJob) => {
@@ -794,16 +896,22 @@ export default function MeetingReviewPage() {
           const prevKey1 = `${job.project_id}_${code}`;
           const prevKey2 = `${job.project_id}_${name}`;
           const prev = previousMeetingData[prevKey1] || previousMeetingData[prevKey2];
-          const baselineInstalled = prev?.installed_quantity ?? 0;
+          const backendPrevInstalled = scope.previous_meeting_installed;
+          const baselineInstalledRaw =
+            backendPrevInstalled !== undefined ? safeNumber(backendPrevInstalled, 0) : prev?.installed_quantity ?? 0;
 
           // find phase for this scope code
           const phase = (job.phases || []).find((p) => p.phase_code === code);
 
           // TOTAL quantity
           const totalQty = safeNumber(scope.qty_sq_ft, phase?.quantity ?? 0);
+          const baselineInstalled = Math.min(totalQty, Math.max(0, baselineInstalledRaw));
 
           // CUMULATIVE installed total stored for this meeting
-          const installedTotal = phase ? safeNumber(phase.installed_quantity, baselineInstalled) : baselineInstalled;
+          const phaseInstalled = phase ? safeNumber(phase.installed_quantity, baselineInstalled) : baselineInstalled;
+          const installedTotalRaw =
+            phase && phaseInstalled < baselineInstalled ? baselineInstalled + phaseInstalled : phaseInstalled;
+          const installedTotal = Math.min(totalQty, Math.max(0, installedTotalRaw));
 
           // delta this meeting (what user edits)
           const computedDelta = Math.max(0, installedTotal - baselineInstalled);
@@ -819,8 +927,17 @@ export default function MeetingReviewPage() {
             return Number.isFinite(n) ? n : null;
           };
 
-          const prevBalance = round2(totalQty - baselineInstalled);
-          const currBalance = round2(totalQty - installedTotal);
+          const backendPrevBalance = scope.previous_balance;
+          const scopeInstalled = Math.min(totalQty, safeNumber(scope.installed, baselineInstalled));
+          const currentMeetingInstalled = Math.max(0, installedTotal - baselineInstalled);
+          const cumulativeBeforeThisMeeting = scopeInstalled - currentMeetingInstalled;
+          const prevBalance =
+            backendPrevBalance !== undefined
+              ? round2(safeNumber(backendPrevBalance, 0))
+              : round2(
+                  Math.max(0, totalQty - (phase ? cumulativeBeforeThisMeeting : scopeInstalled)),
+                );
+          const currBalance = round2(Math.max(0, prevBalance - computedDelta));
           const progressThisMeeting = round2(installedTotal - baselineInstalled);
           const pct = totalQty > 0 ? Math.min(100, Math.max(0, (installedTotal / totalQty) * 100)) : 0;
 
@@ -920,17 +1037,20 @@ export default function MeetingReviewPage() {
                       if (parsed === null) return;
 
                       const delta = Math.max(0, parsed);
-                      const newTotal = round2(baselineInstalled + delta);
+                      const newTotal = round2(Math.min(totalQty, baselineInstalled + delta));
 
                       ensurePhase(job.project_id, code, description, scope, { installed_quantity: newTotal, quantity: totalQty }, baselineInstalled);
                     }}
                     onBlur={() => {
                       const raw = installedDraft[k] ?? String(computedDelta);
+                      const trimmed = raw.trim();
                       const parsed = parseDelta(raw);
-                      const delta = Math.max(0, parsed ?? computedDelta);
-                      const newTotal = round2(baselineInstalled + delta);
+                      const delta =
+                        trimmed === '' ? 0 : Math.max(0, parsed ?? computedDelta);
+                      const newTotal = round2(Math.min(totalQty, baselineInstalled + delta));
 
-                      setInstalledDraft((prevD) => ({ ...prevD, [k]: String(round2(delta)) }));
+                      const clampedDelta = Math.max(0, newTotal - baselineInstalled);
+                      setInstalledDraft((prevD) => ({ ...prevD, [k]: String(round2(clampedDelta)) }));
                       ensurePhase(job.project_id, code, description, scope, { installed_quantity: newTotal, quantity: totalQty }, baselineInstalled);
                     }}
                     className="text-sm"
@@ -1007,15 +1127,17 @@ export default function MeetingReviewPage() {
           <div className="lg:pl-64">
             <Header />
             <main className="pt-16 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8">
-              <Card className="p-6">
-                <div className="flex items-center gap-3">
-                  <LoadingSpinner />
-                  <div>
-                    <div className="text-sm font-semibold text-gray-900">Loading…</div>
-                    <div className="text-xs text-gray-500">{loadingMessage || 'Please wait'}</div>
+              <div className="flex items-center justify-center h-[calc(100vh-8rem)]">
+                <Card className="p-6 w-full max-w-md">
+                  <div className="flex items-center gap-3">
+                    <LoadingSpinner />
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">Loading…</div>
+                      <div className="text-xs text-gray-500">{loadingMessage || 'Please wait'}</div>
+                    </div>
                   </div>
-                </div>
-              </Card>
+                </Card>
+              </div>
             </main>
           </div>
         </div>
