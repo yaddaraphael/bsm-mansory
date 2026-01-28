@@ -19,6 +19,7 @@ from .models import (
 from .serializers import SpectrumJobSerializer
 from .services import SpectrumSOAPClient
 from .sync_engine import run_spectrum_sync
+from .tasks import sync_spectrum_jobs_manual_task
 from .models import SpectrumSyncRun
 from accounts.permissions import IsRootSuperadmin
 from projects.models import Project
@@ -108,6 +109,18 @@ def safe_strip(value):
         stripped = value.strip()
         return stripped if stripped else None
     return value
+
+
+def _coerce_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
+    return default
 
 
 @api_view(['GET'])
@@ -237,7 +250,44 @@ def import_jobs_to_database(request):
                 },
                 status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+        # Prefer async sync to avoid gateway timeouts
+        async_flag = _coerce_bool(request.data.get('async'), default=True)
+        if async_flag:
+            company_code = request.data.get("company_code") or None
+            divisions = request.data.get("divisions")
+            division = request.data.get("division")
+            if divisions and isinstance(divisions, list):
+                divisions_list = [str(d).strip() for d in divisions if str(d).strip()]
+            elif division:
+                divisions_list = [str(division).strip()]
+            else:
+                divisions_list = None
+
+            status_code = request.data.get("status_code", "")
+            if status_code is None:
+                status_code = ""
+
+            try:
+                task = sync_spectrum_jobs_manual_task.delay(
+                    company_code=company_code,
+                    divisions=divisions_list,
+                    status_code=status_code,
+                )
+                return Response(
+                    {
+                        "detail": "Spectrum import queued.",
+                        "queued": True,
+                        "task_id": task.id,
+                        "company_code": company_code,
+                        "divisions": divisions_list,
+                        "status_code": status_code,
+                    },
+                    status=http_status.HTTP_200_OK,
+                )
+            except Exception:
+                logger.error("Failed to enqueue Spectrum import task", exc_info=True)
+
         # Get query parameters for filtering
         company_code = request.data.get('company_code', None)
         division = request.data.get('division', None)
@@ -656,7 +706,7 @@ def import_jobs_to_database(request):
                         elif spectrum_status == 'C':
                             project_status = 'COMPLETED'
                         elif spectrum_status == 'I':
-                            project_status = 'PENDING'
+                            project_status = 'INACTIVE'
                         else:
                             project_status = 'PENDING'  # Default for unknown statuses
                         
@@ -1052,6 +1102,28 @@ def manual_sync_jobs(request):
         # DRF may give None; normalize
         if status_code is None:
             status_code = ""
+
+        async_flag = _coerce_bool(request.data.get("async"), default=True)
+        if async_flag:
+            try:
+                task = sync_spectrum_jobs_manual_task.delay(
+                    company_code=company_code,
+                    divisions=divisions_list,
+                    status_code=status_code,
+                )
+                return Response(
+                    {
+                        "detail": "Spectrum sync queued.",
+                        "queued": True,
+                        "task_id": task.id,
+                        "company_code": company_code,
+                        "divisions": divisions_list,
+                        "status_code": status_code,
+                    },
+                    status=http_status.HTTP_200_OK,
+                )
+            except Exception:
+                logger.error("Failed to enqueue Spectrum sync task", exc_info=True)
 
         stats = run_spectrum_sync(
             company_code=company_code,

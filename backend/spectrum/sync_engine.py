@@ -41,6 +41,13 @@ DEFAULT_DIVISIONS = ["111", "121", "131", "135", "145"]
 DEFAULT_STATUS_CODES = ["A", "I", "C"]
 
 
+def _coerce_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
 @dataclass(frozen=True)
 class SyncConfig:
     company_code: Optional[str]
@@ -275,12 +282,149 @@ class SpectrumSyncEngine:
         with transaction.atomic():
             upserted = _bulk_upsert(SpectrumJob, objs, unique_fields=["company_code", "job_number"], batch_size=2000)
 
+        project_stats = self._sync_projects_from_jobs(jobs_by_key, main_map)
+
         return {
             "fetched_jobs": len(jobs),
             "fetched_job_main": len(mains),
             "upserted": upserted,
             "job_keys": job_keys,  # used for contacts
+            "projects": project_stats,
         }
+
+    def _sync_projects_from_jobs(
+        self,
+        jobs_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+        main_map: Dict[Tuple[str, str], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        from accounts.models import User
+        from branches.models import Branch
+        from projects.models import Project
+
+        division_names = {
+            "111": "Kansas City / Nebraska",
+            "121": "Denver",
+            "131": "SLC Commercial",
+            "135": "Utah Commercial",
+            "145": "St George",
+        }
+
+        branches_cache: Dict[str, Branch] = {}
+        for branch in Branch.objects.all():
+            if branch.spectrum_division_code:
+                branches_cache[branch.spectrum_division_code] = branch
+
+        default_branch = Branch.objects.filter(status="ACTIVE").first()
+        if not default_branch:
+            default_branch = Branch.objects.create(
+                name="Unassigned",
+                code="UNASSIGNED",
+                spectrum_division_code=None,
+                status="ACTIVE",
+            )
+
+        pm_users = list(User.objects.filter(role="PROJECT_MANAGER"))
+        pm_index: Dict[Tuple[str, str], User] = {}
+        for user in pm_users:
+            first = _coerce_text(user.first_name)
+            last = _coerce_text(user.last_name)
+            if first and last:
+                pm_index[(first.lower(), last.lower())] = user
+
+        def match_pm(pm_name: Optional[str]) -> Optional[User]:
+            if not pm_name:
+                return None
+            cleaned = pm_name.replace(",", " ").strip()
+            parts = [p for p in cleaned.split() if p]
+            if len(parts) < 2:
+                return None
+            first = parts[0].lower()
+            last = " ".join(parts[1:]).lower()
+            direct = pm_index.get((first, last))
+            if direct:
+                return direct
+            if len(parts) == 2:
+                swapped = pm_index.get((parts[1].lower(), parts[0].lower()))
+                if swapped:
+                    return swapped
+            for user in pm_users:
+                uf = (user.first_name or "").lower()
+                ul = (user.last_name or "").lower()
+                if first in uf and last in ul:
+                    return user
+            return None
+
+        created = 0
+        updated = 0
+        matched_pms = 0
+
+        for (company, job_number), job_row in jobs_by_key.items():
+            job_main = main_map.get((company, job_number), {})
+
+            division_code = safe_strip(job_row.get("Division"))
+            branch = None
+            if division_code:
+                branch = branches_cache.get(division_code)
+                if not branch:
+                    division_name = division_names.get(division_code, f"Division {division_code}")
+                    branch = Branch.objects.create(
+                        name=division_name,
+                        code=division_code,
+                        spectrum_division_code=division_code,
+                        status="ACTIVE",
+                    )
+                    branches_cache[division_code] = branch
+
+            if not branch:
+                branch = default_branch
+
+            project_name = safe_strip(job_row.get("Job_Description")) or f"Job {job_number}"
+
+            spectrum_status = safe_strip(job_row.get("Status_Code"))
+            if spectrum_status == "A":
+                project_status = "ACTIVE"
+            elif spectrum_status == "C":
+                project_status = "COMPLETED"
+            elif spectrum_status == "I":
+                project_status = "INACTIVE"
+            else:
+                project_status = "PENDING"
+
+            project_defaults: Dict[str, Any] = {
+                "name": project_name,
+                "branch": branch,
+                "spectrum_division_code": division_code,
+                "client_name": safe_strip(job_main.get("Customer_Name")) or safe_strip(job_row.get("Customer_Code")),
+                "work_location": f"{safe_strip(job_row.get('Address_1')) or ''} {safe_strip(job_row.get('City')) or ''} {safe_strip(job_row.get('State')) or ''}".strip(),
+                "status": project_status,
+                "start_date": timezone.now().date(),
+                "duration": 30,
+                "is_public": True,
+            }
+
+            original_contract = parse_decimal(job_main.get("Original_Contract"))
+            if original_contract is not None:
+                project_defaults["contract_value"] = original_contract
+                project_defaults["spectrum_original_contract"] = original_contract
+
+            pm_name = safe_strip(job_row.get("Project_Manager")) or safe_strip(job_main.get("Project_Manager"))
+            matched_pm = match_pm(pm_name) if pm_name else None
+            if pm_name:
+                project_defaults["spectrum_project_manager"] = pm_name
+            if matched_pm:
+                project_defaults["project_manager"] = matched_pm
+                matched_pms += 1
+
+            project, was_created = Project.objects.update_or_create(
+                job_number=job_number,
+                defaults=project_defaults,
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+
+        return {"created": created, "updated": updated, "pm_matched": matched_pms}
 
     def _sync_job_dates(self, run: SpectrumSyncRun) -> Dict[str, Any]:
         company_code = self.config.company_code or self.client.company_code
@@ -292,6 +436,7 @@ class SpectrumSyncEngine:
         self._maybe_store_raw(run, "GetJobDates", {"company_code": company_code, "divisions": divisions, "status_code": status_code}, rows)
 
         objs: List[SpectrumJobDates] = []
+        project_updates: List[Tuple[str, Dict[str, Any]]] = []
         for r in rows:
             company = safe_strip(r.get("Company_Code")) or company_code or ""
             job_number = safe_strip(r.get("Job_Number")) or ""
@@ -320,10 +465,34 @@ class SpectrumSyncEngine:
             }
             objs.append(SpectrumJobDates(**defaults))
 
+            project_update_fields: Dict[str, Any] = {}
+            if defaults["est_start_date"]:
+                project_update_fields["spectrum_est_start_date"] = defaults["est_start_date"]
+            if defaults["est_complete_date"]:
+                project_update_fields["spectrum_est_complete_date"] = defaults["est_complete_date"]
+            if defaults["projected_complete_date"]:
+                project_update_fields["spectrum_projected_complete_date"] = defaults["projected_complete_date"]
+            if defaults["start_date"]:
+                project_update_fields["spectrum_start_date"] = defaults["start_date"]
+            if defaults["complete_date"]:
+                project_update_fields["spectrum_complete_date"] = defaults["complete_date"]
+            if defaults["create_date"]:
+                project_update_fields["spectrum_create_date"] = defaults["create_date"]
+            if project_update_fields:
+                project_updates.append((job_number, project_update_fields))
+
         with transaction.atomic():
             upserted = _bulk_upsert(SpectrumJobDates, objs, unique_fields=["company_code", "job_number"], batch_size=2000)
 
-        return {"fetched": len(rows), "upserted": upserted}
+        if project_updates:
+            from projects.models import Project
+            for job_number, update_fields in project_updates:
+                try:
+                    Project.objects.filter(job_number=job_number).update(**update_fields)
+                except Exception:
+                    logger.warning(f"Failed to update project dates for {job_number}", exc_info=True)
+
+        return {"fetched": len(rows), "upserted": upserted, "project_updates": len(project_updates)}
 
     def _sync_job_udf(self, run: SpectrumSyncRun) -> Dict[str, Any]:
         company_code = self.config.company_code or self.client.company_code
@@ -383,7 +552,10 @@ class SpectrumSyncEngine:
                 all_rows.extend(rows)
                 logger.info(f"Fetched {len(rows)} enhanced phases for status {sc}")
 
+        from decimal import Decimal
+
         objs: List[SpectrumPhaseEnhanced] = []
+        agg_by_job: Dict[str, Dict[str, Any]] = {}
         for p in all_rows:
             company = safe_strip(p.get("Company_Code")) or company_code or ""
             job_number = safe_strip(p.get("Job_Number")) or ""
@@ -391,6 +563,23 @@ class SpectrumSyncEngine:
             cost_type = safe_strip(p.get("Cost_Type")) or ""
             if not company or not job_number or not phase_code:
                 continue
+
+            projected_dollars = parse_decimal(p.get("Projected_Dollars"))
+            estimated_dollars = parse_decimal(p.get("Current_Estimated_Dollars"))
+            jtd_dollars = parse_decimal(p.get("JTD_Actual_Dollars"))
+
+            agg = agg_by_job.setdefault(
+                job_number,
+                {"projected": Decimal("0"), "estimated": Decimal("0"), "jtd": Decimal("0"), "cost_types": set()},
+            )
+            if projected_dollars is not None:
+                agg["projected"] += projected_dollars
+            if estimated_dollars is not None:
+                agg["estimated"] += estimated_dollars
+            if jtd_dollars is not None:
+                agg["jtd"] += jtd_dollars
+            if cost_type:
+                agg["cost_types"].add(cost_type)
 
             defaults: Dict[str, Any] = {
                 "company_code": company,
@@ -402,13 +591,13 @@ class SpectrumSyncEngine:
                 "unit_of_measure": truncate_field(safe_strip(p.get("Unit_of_Measure")), 25),
                 "jtd_quantity": parse_decimal(p.get("JTD_Quantity")),
                 "jtd_hours": parse_decimal(p.get("JTD_Hours")),
-                "jtd_actual_dollars": parse_decimal(p.get("JTD_Actual_Dollars")),
+                "jtd_actual_dollars": jtd_dollars,
                 "projected_quantity": parse_decimal(p.get("Projected_Quantity")),
                 "projected_hours": parse_decimal(p.get("Projected_Hours")),
-                "projected_dollars": parse_decimal(p.get("Projected_Dollars")),
+                "projected_dollars": projected_dollars,
                 "estimated_quantity": parse_decimal(p.get("Estimated_Quantity")),
                 "estimated_hours": parse_decimal(p.get("Estimated_Hours")),
-                "current_estimated_dollars": parse_decimal(p.get("Current_Estimated_Dollars")),
+                "current_estimated_dollars": estimated_dollars,
                 "cost_center": truncate_field(safe_strip(p.get("Cost_Center")), 25),
                 "price_method_code": safe_strip(p.get("Price_Method_Code")),
                 "complete_date": parse_date_robust(p.get("Complete_Date")),
@@ -429,7 +618,26 @@ class SpectrumSyncEngine:
                 unique_fields=["company_code", "job_number", "phase_code", "cost_type"],
                 batch_size=5000,
             )
-        return {"fetched": len(all_rows), "upserted": upserted}
+        if agg_by_job:
+            from projects.models import Project
+            for job_number, agg in agg_by_job.items():
+                update_fields: Dict[str, Any] = {}
+                if agg["projected"]:
+                    update_fields["spectrum_total_projected_dollars"] = agg["projected"]
+                if agg["estimated"]:
+                    update_fields["spectrum_total_estimated_dollars"] = agg["estimated"]
+                if agg["jtd"]:
+                    update_fields["spectrum_total_jtd_dollars"] = agg["jtd"]
+                cost_types = sorted(agg["cost_types"]) if agg["cost_types"] else None
+                if cost_types:
+                    update_fields["spectrum_cost_types"] = ", ".join(cost_types)
+                if update_fields:
+                    try:
+                        Project.objects.filter(job_number=job_number).update(**update_fields)
+                    except Exception:
+                        logger.warning(f"Failed to update project phase aggregates for {job_number}", exc_info=True)
+
+        return {"fetched": len(all_rows), "upserted": upserted, "project_updates": len(agg_by_job)}
 
     def _sync_job_contacts(self, run: SpectrumSyncRun, job_numbers: List[str]) -> Dict[str, Any]:
         company_code = self.config.company_code or self.client.company_code

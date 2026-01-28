@@ -354,45 +354,6 @@ function AdminDashboard({ stats, loading }: AdminDashboardProps) {
         </Card>
       </div>
 
-      {/* Financial Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/reports')}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Total Contract Value</p>
-              <p className="text-xl md:text-2xl font-bold text-primary">
-                ${loading ? '...' : (stats?.total_contract_value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <CurrencyDollarIcon className="h-10 w-10 text-primary opacity-20" />
-          </div>
-        </Card>
-        
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/reports')}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Contract Balance</p>
-              <p className="text-xl md:text-2xl font-bold text-primary">
-                ${loading ? '...' : (stats?.total_contract_balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <CurrencyDollarIcon className="h-10 w-10 text-primary opacity-20" />
-          </div>
-        </Card>
-        
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/reports')}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Estimated Revenue</p>
-              <p className="text-xl md:text-2xl font-bold text-green-600">
-                ${loading ? '...' : (stats?.revenue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-            </div>
-            <ChartBarIcon className="h-10 w-10 text-green-600 opacity-20" />
-          </div>
-        </Card>
-      </div>
-
       {/* Project Status Cards */}
       <div>
         <h3 className="text-lg font-semibold text-gray-900 mb-3">Project Status</h3>
@@ -588,7 +549,7 @@ function BranchManagerDashboard({ stats, loading }: BranchManagerDashboardProps)
       </div>
 
       {/* Financial Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 gap-4 md:gap-6">
         <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => router.push('/reports')}>
           <div className="flex items-center justify-between">
             <div>
@@ -1054,18 +1015,6 @@ function FinanceDashboard({ stats, loading }: FinanceDashboardProps) {
   return (
       <div className="space-y-4 md:space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-        <Card>
-          <p className="text-sm text-gray-600">Total Contract Value</p>
-          <p className="text-2xl font-bold text-primary">
-            ${loading ? '...' : (stats?.total_contract_value || 0).toLocaleString()}
-          </p>
-        </Card>
-        <Card>
-          <p className="text-sm text-gray-600">Contract Balance</p>
-          <p className="text-2xl font-bold text-primary">
-            ${loading ? '...' : (stats?.total_contract_balance || 0).toLocaleString()}
-          </p>
-        </Card>
         <Card>
           <p className="text-sm text-gray-600">Projects</p>
           <p className="text-3xl font-bold text-primary">
