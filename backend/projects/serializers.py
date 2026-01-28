@@ -410,6 +410,8 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     branch_code = serializers.SerializerMethodField()
     job_description = serializers.SerializerMethodField()
     spectrum_status_code = serializers.SerializerMethodField()
+    project_manager_detail = UserSerializer(source='project_manager', read_only=True)
+    project_manager_name = serializers.SerializerMethodField()
 
     scopes = ProjectScopeSerializer(many=True, read_only=True)
 
@@ -430,6 +432,7 @@ class PublicProjectSerializer(serializers.ModelSerializer):
             'production_percent_complete', 'financial_percent_complete',
             'total_quantity', 'total_installed', 'remaining',
             'schedule_status', 'scopes', 'notes',
+            'project_manager_detail', 'project_manager_name',
             'created_at', 'updated_at', 'client_name', 'work_location'
         ]
         read_only_fields = ['created_at', 'updated_at', 'job_number']
@@ -446,6 +449,15 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     def get_spectrum_status_code(self, obj: Project):
         return getattr(obj, 'spectrum_status_code', None) or getattr(obj, 'spectrum_status_code_annot', None)
 
+    def get_project_manager_name(self, obj: Project):
+        try:
+            if obj.project_manager:
+                name = f"{obj.project_manager.first_name or ''} {obj.project_manager.last_name or ''}".strip()
+                return name or obj.project_manager.username or None
+            return getattr(obj, 'spectrum_project_manager', None) or getattr(obj, 'spectrum_pm_name_annot', None)
+        except Exception:
+            return getattr(obj, 'spectrum_project_manager', None) or getattr(obj, 'spectrum_pm_name_annot', None)
+
     def get_estimated_end_date(self, obj: Project):
         try:
             date = getattr(obj, 'estimated_end_date', None)
@@ -457,29 +469,37 @@ class PublicProjectSerializer(serializers.ModelSerializer):
     # these methods become O(1) (no per-project aggregate queries).
     def get_total_quantity(self, obj: Project):
         try:
-            value = getattr(obj, 'total_quantity', None)
-            return float(value) if value else 0.0
+            value = getattr(obj, 'total_quantity_annot', None)
+            if value is not None:
+                return float(value)
+            return float(obj.total_quantity)
         except Exception:
             return 0.0
 
     def get_total_installed(self, obj: Project):
         try:
-            value = getattr(obj, 'total_installed', None)
-            return float(value) if value else 0.0
+            value = getattr(obj, 'total_installed_annot', None)
+            if value is not None:
+                return float(value)
+            return float(obj.total_installed)
         except Exception:
             return 0.0
 
     def get_remaining(self, obj: Project):
         try:
-            value = getattr(obj, 'remaining', None)
-            return float(value) if value else 0.0
+            value = getattr(obj, 'remaining_annot', None)
+            if value is not None:
+                return float(value)
+            return float(obj.remaining)
         except Exception:
             return 0.0
 
     def get_production_percent_complete(self, obj: Project):
         try:
-            value = getattr(obj, 'production_percent_complete', None)
-            return float(value) if value else 0.0
+            value = getattr(obj, 'production_percent_complete_annot', None)
+            if value is not None:
+                return float(value)
+            return float(obj.production_percent_complete)
         except Exception:
             return 0.0
 

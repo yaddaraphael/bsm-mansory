@@ -54,7 +54,7 @@ class SpectrumSOAPClient:
         # Put the real list in settings.py:
         # SPECTRUM_DIVISIONS = ["111", "121", ...]
         self.default_divisions: List[str] = list(
-            getattr(settings, "SPECTRUM_DIVISIONS", ["111", "121", "131", "135", "145"])
+            getattr(settings, "SPECTRUM_DIVISIONS", ["111", "121", "131", "135", "145", "115"])
         )
 
         if not self.endpoint:
@@ -357,10 +357,11 @@ class SpectrumSOAPClient:
             cc = (r.get("Company_Code") or r.get("company_code") or "").strip()
             jn = (r.get("Job_Number") or r.get("job_number") or "").strip()
             key = (cc, jn)
-            if cc and jn:
-                if key in seen:
-                    continue
-                seen.add(key)
+            if not (cc and jn):
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
             out.append(r)
         return out
 

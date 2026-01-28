@@ -203,16 +203,18 @@ class SpectrumSyncEngine:
             if jn:
                 main_map[(c, jn)] = row
 
-        objs: List[SpectrumJob] = []
-        job_keys: List[Tuple[str, str]] = []
-
+        jobs_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for row in jobs:
             company = safe_strip(row.get("Company_Code")) or company_code or ""
             job_number = safe_strip(row.get("Job_Number")) or ""
             if not company or not job_number:
                 continue
+            jobs_by_key[(company, job_number)] = row
 
-            job_keys.append((company, job_number))
+        objs: List[SpectrumJob] = []
+        job_keys: List[Tuple[str, str]] = list(jobs_by_key.keys())
+
+        for (company, job_number), row in jobs_by_key.items():
             job_main = main_map.get((company, job_number), {})
 
             defaults: Dict[str, Any] = {

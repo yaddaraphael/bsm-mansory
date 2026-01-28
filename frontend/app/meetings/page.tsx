@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
@@ -87,9 +87,10 @@ type MeetingListParams = {
   branch?: number;
   date_from?: string;
   date_to?: string;
+  status?: string;
 };
 
-export default function MeetingsPage() {
+function MeetingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
@@ -738,5 +739,19 @@ export default function MeetingsPage() {
         )}
       </div>
     </ProtectedRoute>
+  );
+}
+
+export default function MeetingsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-gray-50">
+          <LoadingSpinner />
+        </div>
+      }
+    >
+      <MeetingsPageContent />
+    </Suspense>
   );
 }

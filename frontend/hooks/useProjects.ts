@@ -10,6 +10,7 @@ export interface Project {
   job_number: string;
   name: string;
 
+  branch?: number | { id: number; name?: string };
   project_manager?: number;
   spectrum_status_code?: string;
   status?: string;
@@ -25,8 +26,58 @@ export interface Project {
   spectrum_project_manager_name?: string;
   production_percent_complete?: number;
 
+  start_date?: string;
+  duration?: number;
+  saturdays?: boolean;
+  full_weekends?: boolean;
+  is_public?: boolean;
+  public_pin?: string;
+  notes?: string;
+  spectrum_division_code?: string;
+  client_name?: string;
+  work_location?: string;
+  schedule_status?: {
+    status?: string;
+    forecast_date?: string;
+    days_late?: number;
+  };
+  qty_sq?: number;
+  created_at?: string;
+  updated_at?: string;
+
+  spectrum_est_start_date?: string;
+  spectrum_start_date?: string;
+  spectrum_projected_complete_date?: string;
+  spectrum_complete_date?: string;
+
   projected_complete_date?: string;
   actual_complete_date?: string;
+
+  scopes?: ProjectScope[];
+}
+
+export interface ProjectScope {
+  id: number;
+  scope_type: number | { id: number; code?: string; name?: string };
+  scope_type_id?: number;
+  scope_type_detail?: { id: number; code?: string; name?: string };
+  description?: string;
+  estimation_start_date?: string;
+  estimation_end_date?: string;
+  duration_days?: number;
+  saturdays?: boolean;
+  full_weekends?: boolean;
+  qty_sq_ft?: number;
+  quantity?: number;
+  installed?: number;
+  remaining?: number;
+  percent_complete?: number;
+  masons?: number;
+  tenders?: number;
+  operators?: number;
+  foreman?: number | { id: number; name: string } | null;
+  foreman_id?: number | null;
+  foreman_detail?: { id: number; name: string };
 }
 
 export interface PaginatedResponse<T> {

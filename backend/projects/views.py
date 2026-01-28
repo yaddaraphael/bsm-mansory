@@ -979,7 +979,7 @@ class BranchPortalProjectListView(generics.ListAPIView):
     """
     serializer_class = PublicProjectSerializer
     permission_classes = [AllowAny]
-    pagination_class = StandardResultsSetPagination
+    pagination_class = None
     
     def get_queryset(self):
         division_code = self.kwargs.get('division_code')
@@ -1023,8 +1023,8 @@ class BranchPortalProjectListView(generics.ListAPIView):
         
         # Return public projects for this branch/division
         # Filter by both branch and spectrum_division_code to ensure each division only sees their own projects
-        return Project.objects.filter(
-            is_public=True,
+        qs = _annotated_projects_queryset(include_scopes=True)
+        return qs.filter(
             status="ACTIVE",
         ).filter(
             Q(branch=branch) | Q(spectrum_division_code=division_code)

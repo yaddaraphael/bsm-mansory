@@ -3,7 +3,6 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import axios from 'axios';
-import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
@@ -15,6 +14,9 @@ interface ProjectScope {
   scope_type: number | { id: number; code: string; name: string };
   scope_type_detail?: { id: number; code: string; name: string };
   description?: string;
+  estimation_start_date?: string;
+  estimation_end_date?: string;
+  duration_days?: number;
   qty_sq_ft: number;
   installed: number;
   remaining?: number;
@@ -50,6 +52,13 @@ interface Project {
   // public
   is_public: boolean;
   public_pin?: string;
+  project_manager_detail?: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
+  project_manager_name?: string;
 
   // schedule
   schedule_status?: {
@@ -167,9 +176,61 @@ function clampPercent(v: number) {
   return Math.min(100, Math.max(0, v));
 }
 
-export default function HQPortalPage() {
-  const router = useRouter();
+function formatUserName(user?: { first_name?: string; last_name?: string; username?: string }, fallback?: string) {
+  if (!user) return fallback || 'N/A';
+  const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+  return name || user.username || fallback || 'N/A';
+}
 
+function formatDate(value?: string) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return date.toLocaleDateString();
+}
+
+function buildAiSummary(project: Project) {
+  const productionPercent = getProductionPercent(project);
+  const totalQty = project.total_quantity ?? 0;
+  const totalInstalled = project.total_installed ?? 0;
+  const remaining = project.remaining ?? Math.max(0, Number(totalQty) - Number(totalInstalled));
+  const scheduleStatus = project.schedule_status?.status || 'GREEN';
+
+  const scopeStats = Array.isArray(project.scopes)
+    ? project.scopes.map((scope) => {
+        const qty = Number(scope.qty_sq_ft || 0);
+        const installed = Number(scope.installed || 0);
+        const pct = scope.percent_complete ?? (qty > 0 ? (installed / qty) * 100 : 0);
+        return { scope, qty, installed, pct };
+      })
+    : [];
+
+  const byRemaining = [...scopeStats].sort((a, b) => (b.qty - b.installed) - (a.qty - a.installed));
+  const topRemaining = byRemaining.filter((s) => s.qty > s.installed).slice(0, 3);
+
+  const byProgress = [...scopeStats].sort((a, b) => b.pct - a.pct);
+  const topComplete = byProgress.slice(0, 3);
+
+  const statusLine =
+    scheduleStatus === 'RED'
+      ? 'Schedule risk: behind schedule.'
+      : scheduleStatus === 'YELLOW'
+      ? 'Schedule risk: at risk.'
+      : 'Schedule risk: on track.';
+
+  return {
+    headline: productionPercent != null
+      ? `Overall progress is ${Number(productionPercent).toFixed(1)}%.`
+      : 'Overall progress is not yet available.',
+    totals: `Installed ${Number(totalInstalled).toLocaleString()} of ${Number(totalQty).toLocaleString()} with ${Number(remaining).toLocaleString()} remaining.`,
+    schedule: statusLine,
+    topRemaining,
+    topComplete,
+    projectManager: formatUserName(project.project_manager_detail, project.project_manager_name),
+  };
+}
+
+export default function HQPortalPage() {
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
 
@@ -272,8 +333,7 @@ export default function HQPortalPage() {
       setPassword(savedPassword);
       void fetchProjects(savedPassword);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchProjects]);
 
   /**
    * Fetch details for selected project.
@@ -292,7 +352,7 @@ export default function HQPortalPage() {
         const refreshedProjects = await fetchAllProjects(savedPassword);
         setAllProjects(refreshedProjects);
 
-        const updated = refreshedProjects.find((p) => p.id === project.id);
+        const updated = refreshedProjects.find((p: Project) => p.id === project.id);
         if (updated) {
           currentProject = updated;
           setSelectedProject(updated);
@@ -320,7 +380,7 @@ export default function HQPortalPage() {
     } finally {
       setLoadingDetails(false);
     }
-  }, []);
+  }, [fetchAllProjects]);
 
   const handleProjectClick = useCallback(
     (project: Project) => {
@@ -554,7 +614,7 @@ export default function HQPortalPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
         {/* Left Sidebar - Project List */}
         <div className="w-full md:w-80 lg:w-96 border-r bg-white flex flex-col flex-shrink-0" style={{ height: 'calc(100vh - 200px)' }}>
           <div className="flex-shrink-0">
@@ -610,6 +670,10 @@ export default function HQPortalPage() {
                           {!project.job_description && (
                             <p className="text-sm text-gray-500 mt-1">Job #{project.job_number}</p>
                           )}
+
+                          <p className="text-xs text-gray-500 mt-1">
+                            PM: {formatUserName(project.project_manager_detail, project.project_manager_name)}
+                          </p>
 
                           {project.branch_name && (
                             <p className="text-xs text-gray-400 mt-1">
@@ -720,8 +784,8 @@ export default function HQPortalPage() {
           )}
         </div>
 
-        {/* Right Side - Project Details */}
-        <div className="w-full md:flex-1 overflow-y-auto bg-gray-50 min-w-0" style={{ height: 'calc(100vh - 200px)' }}>
+        {/* Middle - Project Details */}
+        <div className="w-full lg:flex-[2] overflow-y-auto bg-gray-50 min-w-0" style={{ height: 'calc(100vh - 200px)' }}>
           {selectedProject ? (
             <div className="p-6">
               {loadingDetails ? (
@@ -816,6 +880,15 @@ export default function HQPortalPage() {
                           <p className="text-gray-900">${Number(selectedProject.contract_value).toLocaleString()}</p>
                         </div>
                       )}
+                      <div>
+                        <label className="text-sm font-medium text-gray-500">Project Manager</label>
+                        <p className="text-gray-900">
+                          {formatUserName(
+                            (projectDetails?.project || selectedProject).project_manager_detail,
+                            (projectDetails?.project || selectedProject).project_manager_name
+                          )}
+                        </p>
+                      </div>
                     </div>
 
                     {/* Schedule Status Bar */}
@@ -1022,6 +1095,33 @@ export default function HQPortalPage() {
                                         </div>
                                       </div>
                                     )}
+
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mt-3 pt-3 border-t border-gray-200">
+                                      <div>
+                                        <span className="text-gray-600">Foreman:</span>
+                                        <span className="text-gray-900 font-medium ml-1">
+                                          {scope.foreman_detail?.name || 'N/A'}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Start:</span>
+                                        <span className="text-gray-900 font-medium ml-1">
+                                          {formatDate(scope.estimation_start_date)}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">End:</span>
+                                        <span className="text-gray-900 font-medium ml-1">
+                                          {formatDate(scope.estimation_end_date)}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-gray-600">Duration:</span>
+                                        <span className="text-gray-900 font-medium ml-1">
+                                          {scope.duration_days != null ? `${scope.duration_days} days` : 'N/A'}
+                                        </span>
+                                      </div>
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -1107,6 +1207,77 @@ export default function HQPortalPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Right - AI Summary */}
+        <div className="w-full lg:w-80 xl:w-96 bg-white border-t lg:border-t-0 lg:border-l border-gray-200 overflow-y-auto" style={{ height: 'calc(100vh - 200px)' }}>
+          <div className="p-6">
+            <Card>
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold text-gray-900">AI Project Summary</h3>
+                {selectedProject ? (() => {
+                  const detailProject = projectDetails?.project || selectedProject;
+                  const summary = buildAiSummary(detailProject);
+
+                  return (
+                    <div className="text-sm text-gray-700 space-y-3">
+                      <p>{summary.headline}</p>
+                      <p>{summary.totals}</p>
+                      <p>{summary.schedule}</p>
+                      <p>Project Manager: {summary.projectManager}</p>
+
+                      {summary.topRemaining.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Largest Remaining Scopes</p>
+                          <div className="space-y-1">
+                            {summary.topRemaining.map(({ scope, qty, installed }) => {
+                              const name =
+                                typeof scope.scope_type === 'object'
+                                  ? scope.scope_type.name
+                                  : scope.scope_type_detail?.name || 'Unknown';
+                              const remaining = Math.max(0, qty - installed);
+                              return (
+                                <div key={scope.id} className="text-xs text-gray-700">
+                                  {name}: {Number(remaining).toLocaleString()} remaining
+                                  {scope.foreman_detail?.name ? ` · Foreman: ${scope.foreman_detail.name}` : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {summary.topComplete.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Most Complete Scopes</p>
+                          <div className="space-y-1">
+                            {summary.topComplete.map(({ scope, pct }) => {
+                              const name =
+                                typeof scope.scope_type === 'object'
+                                  ? scope.scope_type.name
+                                  : scope.scope_type_detail?.name || 'Unknown';
+                              return (
+                                <div key={scope.id} className="text-xs text-gray-700">
+                                  {name}: {Number(pct).toFixed(1)}%
+                                  {scope.foreman_detail?.name ? ` · Foreman: ${scope.foreman_detail.name}` : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-xs text-gray-500">
+                        Project: {selectedProject.job_number} · {selectedProject.name || selectedProject.job_description}
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <p className="text-sm text-gray-600">Select a project to see its AI summary.</p>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

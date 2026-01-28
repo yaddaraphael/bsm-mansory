@@ -643,7 +643,7 @@ export default function MeetingReviewPage() {
       setError(e?.response?.data?.detail || e?.message || 'Failed to load meeting details');
       setLoading(false);
     }
-  }, [meetingId, scopeTypes.length, fetchScopeTypes, buildPMFilters]);
+  }, [meetingId, scopeTypes, fetchScopeTypes, buildPMFilters]);
 
   useEffect(() => {
     if (!meetingId) return;
@@ -937,7 +937,9 @@ export default function MeetingReviewPage() {
               : round2(
                   Math.max(0, totalQty - (phase ? cumulativeBeforeThisMeeting : scopeInstalled)),
                 );
-          const currBalance = round2(Math.max(0, prevBalance - computedDelta));
+          const parsedDraft = parseDelta(draft);
+          const deltaForBalance = parsedDraft === null ? computedDelta : Math.max(0, parsedDraft);
+          const currBalance = round2(Math.max(0, prevBalance - deltaForBalance));
           const progressThisMeeting = round2(installedTotal - baselineInstalled);
           const pct = totalQty > 0 ? Math.min(100, Math.max(0, (installedTotal / totalQty) * 100)) : 0;
 

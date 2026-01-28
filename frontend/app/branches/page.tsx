@@ -10,7 +10,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Input from '@/components/ui/Input';
 import { useBranches } from '@/hooks/useBranches';
 import { useRouter } from 'next/navigation';
-import { MagnifyingGlassIcon, MapPinIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, MapPinIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '@/hooks/useAuth';
 import Button from '@/components/ui/Button';
 import api from '@/lib/api';
@@ -122,7 +122,6 @@ export default function BranchesPage() {
     }
   };
 
-  const canCreateBranch = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER'].includes(user?.role || '');
   const canManageBranches = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '');
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [showTransferModal, setShowTransferModal] = useState<number | null>(null);
@@ -350,4 +349,3 @@ export default function BranchesPage() {
     </ProtectedRoute>
   );
 }
-

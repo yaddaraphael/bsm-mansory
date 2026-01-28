@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import api from '@/lib/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
@@ -24,9 +24,122 @@ interface Project {
   financial_percent_complete?: number;
   is_public: boolean;
   public_pin?: string;
+  scopes?: ProjectScope[];
+  total_quantity?: number;
+  total_installed?: number;
+  remaining?: number;
+  project_manager_detail?: {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+  };
+  project_manager_name?: string;
   schedule_status?: {
     status: string;
     days_late?: number;
+  };
+}
+
+interface ProjectScope {
+  id: number;
+  scope_type: number | { id: number; code: string; name: string };
+  scope_type_detail?: { id: number; code: string; name: string };
+  description?: string;
+  estimation_start_date?: string;
+  estimation_end_date?: string;
+  duration_days?: number;
+  qty_sq_ft: number;
+  installed: number;
+  remaining?: number;
+  percent_complete?: number;
+  masons?: number;
+  tenders?: number;
+  operators?: number;
+  foreman_detail?: { id: number; name: string };
+}
+
+function getProductionPercent(p: Project): number | null {
+  if (p.production_percent_complete != null && !Number.isNaN(Number(p.production_percent_complete))) {
+    return Number(p.production_percent_complete);
+  }
+
+  const ti = p.total_installed;
+  const tq = p.total_quantity;
+  if (ti != null && tq != null && Number(tq) > 0) {
+    return (Number(ti) / Number(tq)) * 100;
+  }
+
+  if (Array.isArray(p.scopes) && p.scopes.length > 0) {
+    const totals = p.scopes.reduce(
+      (acc, s) => {
+        acc.qty += Number(s.qty_sq_ft || 0);
+        acc.inst += Number(s.installed || 0);
+        return acc;
+      },
+      { qty: 0, inst: 0 }
+    );
+    if (totals.qty > 0) return (totals.inst / totals.qty) * 100;
+  }
+
+  return null;
+}
+
+function clampPercent(v: number) {
+  return Math.min(100, Math.max(0, v));
+}
+
+function formatUserName(user?: { first_name?: string; last_name?: string; username?: string }, fallback?: string) {
+  if (!user) return fallback || 'N/A';
+  const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+  return name || user.username || fallback || 'N/A';
+}
+
+function formatDate(value?: string) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return date.toLocaleDateString();
+}
+
+function buildAiSummary(project: Project) {
+  const productionPercent = getProductionPercent(project);
+  const totalQty = project.total_quantity ?? 0;
+  const totalInstalled = project.total_installed ?? 0;
+  const remaining = project.remaining ?? Math.max(0, Number(totalQty) - Number(totalInstalled));
+  const scheduleStatus = project.schedule_status?.status || 'GREEN';
+
+  const scopeStats = Array.isArray(project.scopes)
+    ? project.scopes.map((scope) => {
+        const qty = Number(scope.qty_sq_ft || 0);
+        const installed = Number(scope.installed || 0);
+        const pct = scope.percent_complete ?? (qty > 0 ? (installed / qty) * 100 : 0);
+        return { scope, qty, installed, pct };
+      })
+    : [];
+
+  const byRemaining = [...scopeStats].sort((a, b) => (b.qty - b.installed) - (a.qty - a.installed));
+  const topRemaining = byRemaining.filter((s) => s.qty > s.installed).slice(0, 3);
+
+  const byProgress = [...scopeStats].sort((a, b) => b.pct - a.pct);
+  const topComplete = byProgress.slice(0, 3);
+
+  const statusLine =
+    scheduleStatus === 'RED'
+      ? 'Schedule risk: behind schedule.'
+      : scheduleStatus === 'YELLOW'
+      ? 'Schedule risk: at risk.'
+      : 'Schedule risk: on track.';
+
+  return {
+    headline: productionPercent != null
+      ? `Overall progress is ${Number(productionPercent).toFixed(1)}%.`
+      : 'Overall progress is not yet available.',
+    totals: `Installed ${Number(totalInstalled).toLocaleString()} of ${Number(totalQty).toLocaleString()} with ${Number(remaining).toLocaleString()} remaining.`,
+    schedule: statusLine,
+    topRemaining,
+    topComplete,
+    projectManager: formatUserName(project.project_manager_detail, project.project_manager_name),
   };
 }
 
@@ -56,7 +169,6 @@ const ITEMS_PER_PAGE = 20;
 
 export default function BranchPortalPage() {
   const params = useParams();
-  const router = useRouter();
   const divisionCode = params.branchId as string;
   
   const [password, setPassword] = useState('');
@@ -74,15 +186,7 @@ export default function BranchPortalPage() {
   // Filter states
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PENDING'>('ALL');
 
-  useEffect(() => {
-    const savedPassword = sessionStorage.getItem(`branch_portal_${divisionCode}_password`);
-    if (savedPassword) {
-      setPassword(savedPassword);
-      fetchProjects(savedPassword);
-    }
-  }, [divisionCode]);
-
-  const fetchProjects = async (pwd: string) => {
+  const fetchProjects = React.useCallback(async (pwd: string) => {
     setLoading(true);
     setError(null);
     setAuthenticated(false);
@@ -124,7 +228,15 @@ export default function BranchPortalPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [divisionCode]);
+
+  useEffect(() => {
+    const savedPassword = sessionStorage.getItem(`branch_portal_${divisionCode}_password`);
+    if (savedPassword) {
+      setPassword(savedPassword);
+      fetchProjects(savedPassword);
+    }
+  }, [divisionCode, fetchProjects]);
 
   const fetchProjectDetails = async (project: Project) => {
     setLoadingDetails(true);
@@ -309,9 +421,9 @@ export default function BranchPortalPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden lg:h-[calc(100vh-200px)]">
         {/* Left Sidebar - Project List - Fixed */}
-        <div className="w-full md:w-80 lg:w-96 border-r bg-white flex flex-col flex-shrink-0" style={{ height: 'calc(100vh - 200px)' }}>
+        <div className="w-full lg:w-80 xl:w-96 border-r bg-white flex flex-col flex-shrink-0 lg:h-[calc(100vh-200px)]">
           <div className="flex-shrink-0">
             {/* Search */}
             <div className="p-4 border-b">
@@ -360,6 +472,9 @@ export default function BranchPortalPage() {
                       {!project.job_description && (
                         <p className="text-sm text-gray-500 mt-1">Job #{project.job_number}</p>
                       )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        PM: {formatUserName(project.project_manager_detail, project.project_manager_name)}
+                      </p>
                       {project.schedule_status && (
                         <div className="mt-1">
                           <StatusBar status={project.schedule_status.status || 'GREEN'} />
@@ -408,8 +523,8 @@ export default function BranchPortalPage() {
           )}
         </div>
 
-        {/* Right Side - Project Details - Fixed */}
-        <div className="w-full md:flex-1 overflow-y-auto bg-gray-50 min-w-0" style={{ height: 'calc(100vh - 200px)' }}>
+        {/* Middle - Project Details */}
+        <div className="w-full lg:flex-[2] overflow-y-auto bg-gray-50 min-w-0 lg:h-[calc(100vh-200px)]">
           {selectedProject ? (
             <div className="p-6">
               {loadingDetails ? (
@@ -417,105 +532,249 @@ export default function BranchPortalPage() {
               ) : (
                 <Card>
                   <div className="space-y-6">
-                    {/* Project Header */}
-                    <div>
-                      <h2 className="text-2xl font-bold text-gray-900">
-                        {selectedProject.job_description || selectedProject.name}
-                        {selectedProject.job_description && (
-                          <span className="text-gray-600 font-normal text-lg"> - Job #{selectedProject.job_number}</span>
-                        )}
-                      </h2>
-                      {!selectedProject.job_description && (
-                        <p className="text-gray-600 mt-1">Job #{selectedProject.job_number}</p>
-                      )}
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        <span className={`px-3 py-1 text-sm font-medium rounded-full ${
-                          selectedProject.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
-                          selectedProject.status === 'COMPLETED' ? 'bg-blue-100 text-blue-800' :
-                          'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {selectedProject.status}
-                        </span>
-                        {selectedProject.schedule_status && (
-                          <StatusBar status={selectedProject.schedule_status.status || 'GREEN'} />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Project Information */}
-                    <div className="grid grid-cols-2 gap-4">
-                      {/* Use dates from GetJobDates API (SpectrumJobDates) if available, otherwise fallback to project dates */}
-                      {(projectDetails?.spectrum_data?.dates?.start_date || projectDetails?.spectrum_data?.dates?.est_start_date || selectedProject.start_date) && (
+                    <div className="grid grid-cols-1 lg:grid-cols-10 gap-6">
+                      <div className="space-y-6 lg:col-span-3">
+                        {/* Project Header */}
                         <div>
-                          <label className="text-sm font-medium text-gray-500">Start Date</label>
-                          <p className="text-gray-900">
-                            {projectDetails?.spectrum_data?.dates?.start_date 
-                              ? new Date(String(projectDetails.spectrum_data.dates.start_date)).toLocaleDateString()
-                              : projectDetails?.spectrum_data?.dates?.est_start_date
-                              ? new Date(String(projectDetails.spectrum_data.dates.est_start_date)).toLocaleDateString()
-                              : selectedProject.start_date
-                              ? new Date(selectedProject.start_date).toLocaleDateString()
-                              : 'N/A'}
-                          </p>
-                        </div>
-                      )}
-                      {(projectDetails?.spectrum_data?.dates?.complete_date || projectDetails?.spectrum_data?.dates?.est_complete_date || projectDetails?.spectrum_data?.dates?.projected_complete_date || selectedProject.estimated_end_date) && (
-                        <div>
-                          <label className="text-sm font-medium text-gray-500">End Date</label>
-                          <p className="text-gray-900">
-                            {projectDetails?.spectrum_data?.dates?.complete_date
-                              ? new Date(String(projectDetails.spectrum_data.dates.complete_date)).toLocaleDateString()
-                              : projectDetails?.spectrum_data?.dates?.projected_complete_date
-                              ? new Date(String(projectDetails.spectrum_data.dates.projected_complete_date)).toLocaleDateString()
-                              : projectDetails?.spectrum_data?.dates?.est_complete_date
-                              ? new Date(String(projectDetails.spectrum_data.dates.est_complete_date)).toLocaleDateString()
-                              : selectedProject.estimated_end_date
-                              ? new Date(selectedProject.estimated_end_date).toLocaleDateString()
-                              : 'N/A'}
-                          </p>
-                        </div>
-                      )}
-                      {selectedProject.contract_value && (
-                        <div>
-                          <label className="text-sm font-medium text-gray-500">Contract Value</label>
-                          <p className="text-gray-900">${selectedProject.contract_value.toLocaleString()}</p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Progress */}
-                    {(selectedProject.production_percent_complete != null || selectedProject.financial_percent_complete != null) && (
-                      <div className="space-y-4">
-                        {selectedProject.production_percent_complete != null && (
-                          <div>
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="font-medium text-gray-700">Production Progress</span>
-                              <span className="text-gray-900">{Number(selectedProject.production_percent_complete).toFixed(1)}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
-                              <div
-                                className="bg-blue-600 h-3 rounded-full transition-all"
-                                style={{ width: `${Math.min(100, Math.max(0, Number(selectedProject.production_percent_complete)))}%` }}
-                              />
-                            </div>
+                          <h2 className="text-2xl font-bold text-gray-900">
+                            {selectedProject.job_description || selectedProject.name}
+                            {selectedProject.job_description && (
+                              <span className="text-gray-600 font-normal text-lg"> - Job #{selectedProject.job_number}</span>
+                            )}
+                          </h2>
+                          {!selectedProject.job_description && (
+                            <p className="text-gray-600 mt-1">Job #{selectedProject.job_number}</p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                              selectedProject.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
+                              selectedProject.status === 'COMPLETED' ? 'bg-blue-100 text-blue-800' :
+                              'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {selectedProject.status}
+                            </span>
+                            {selectedProject.schedule_status && (
+                              <StatusBar status={selectedProject.schedule_status.status || 'GREEN'} />
+                            )}
                           </div>
-                        )}
-                        {selectedProject.financial_percent_complete != null && (
+                        </div>
+
+                        {/* Project Information */}
+                        <div className="grid grid-cols-2 gap-4">
+                          {/* Use dates from GetJobDates API (SpectrumJobDates) if available, otherwise fallback to project dates */}
+                          {(projectDetails?.spectrum_data?.dates?.start_date || projectDetails?.spectrum_data?.dates?.est_start_date || selectedProject.start_date) && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Start Date</label>
+                              <p className="text-gray-900">
+                                {projectDetails?.spectrum_data?.dates?.start_date 
+                                  ? new Date(String(projectDetails.spectrum_data.dates.start_date)).toLocaleDateString()
+                                  : projectDetails?.spectrum_data?.dates?.est_start_date
+                                  ? new Date(String(projectDetails.spectrum_data.dates.est_start_date)).toLocaleDateString()
+                                  : selectedProject.start_date
+                                  ? new Date(selectedProject.start_date).toLocaleDateString()
+                                  : 'N/A'}
+                              </p>
+                            </div>
+                          )}
+                          {(projectDetails?.spectrum_data?.dates?.complete_date || projectDetails?.spectrum_data?.dates?.est_complete_date || projectDetails?.spectrum_data?.dates?.projected_complete_date || selectedProject.estimated_end_date) && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">End Date</label>
+                              <p className="text-gray-900">
+                                {projectDetails?.spectrum_data?.dates?.complete_date
+                                  ? new Date(String(projectDetails.spectrum_data.dates.complete_date)).toLocaleDateString()
+                                  : projectDetails?.spectrum_data?.dates?.projected_complete_date
+                                  ? new Date(String(projectDetails.spectrum_data.dates.projected_complete_date)).toLocaleDateString()
+                                  : projectDetails?.spectrum_data?.dates?.est_complete_date
+                                  ? new Date(String(projectDetails.spectrum_data.dates.est_complete_date)).toLocaleDateString()
+                                  : selectedProject.estimated_end_date
+                                  ? new Date(selectedProject.estimated_end_date).toLocaleDateString()
+                                  : 'N/A'}
+                              </p>
+                            </div>
+                          )}
                           <div>
-                            <div className="flex justify-between text-sm mb-2">
-                              <span className="font-medium text-gray-700">Financial Progress</span>
-                              <span className="text-gray-900">{Number(selectedProject.financial_percent_complete).toFixed(1)}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
-                              <div
-                                className="bg-green-600 h-3 rounded-full transition-all"
-                                style={{ width: `${Math.min(100, Math.max(0, Number(selectedProject.financial_percent_complete)))}%` }}
-                              />
-                            </div>
+                            <label className="text-sm font-medium text-gray-500">Project Manager</label>
+                            <p className="text-gray-900">
+                              {formatUserName(
+                                (projectDetails?.project || selectedProject).project_manager_detail,
+                                (projectDetails?.project || selectedProject).project_manager_name
+                              )}
+                            </p>
                           </div>
-                        )}
+                          {selectedProject.contract_value && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-500">Contract Value</label>
+                              <p className="text-gray-900">${selectedProject.contract_value.toLocaleString()}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
+
+                      {/* Progress */}
+                      {(() => {
+                        const detailProject = projectDetails?.project || selectedProject;
+                        const productionPercent = getProductionPercent(detailProject);
+
+                        return (
+                          (productionPercent != null ||
+                            detailProject.financial_percent_complete != null ||
+                            detailProject.scopes?.length) && (
+                            <div className="border-t pt-4 space-y-6 lg:col-span-7 lg:border-t-0 lg:border-l lg:pl-6 lg:pt-0">
+                              <h3 className="text-lg font-semibold text-gray-900">Progress Overview</h3>
+
+                              <div className="space-y-4">
+                                {productionPercent != null && (
+                                  <div>
+                                    <div className="flex justify-between text-sm mb-2">
+                                      <span className="font-medium text-gray-700">Production Progress</span>
+                                      <span className="text-gray-900 font-semibold">
+                                        {Number(productionPercent).toFixed(1)}%
+                                        {detailProject.total_installed != null && detailProject.total_quantity != null && (
+                                          <span className="text-gray-500 font-normal ml-2">
+                                            ({Number(detailProject.total_installed).toLocaleString()} /{' '}
+                                            {Number(detailProject.total_quantity).toLocaleString()} sq.ft)
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-4 relative overflow-hidden">
+                                      <div
+                                        className="bg-blue-600 h-4 rounded-full transition-all"
+                                        style={{ width: `${clampPercent(Number(productionPercent))}%` }}
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900">
+                                        {Number(productionPercent).toFixed(1)}%
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {detailProject.financial_percent_complete != null && (
+                                  <div>
+                                    <div className="flex justify-between text-sm mb-2">
+                                      <span className="font-medium text-gray-700">Financial Progress</span>
+                                      <span className="text-gray-900 font-semibold">
+                                        {Number(detailProject.financial_percent_complete).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-4 relative overflow-hidden">
+                                      <div
+                                        className="bg-green-600 h-4 rounded-full transition-all"
+                                        style={{ width: `${clampPercent(Number(detailProject.financial_percent_complete))}%` }}
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900">
+                                        {Number(detailProject.financial_percent_complete).toFixed(1)}%
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                            </div>
+
+                            {detailProject.scopes && detailProject.scopes.length > 0 && (
+                              <div className="mt-6">
+                                <h4 className="text-md font-semibold text-gray-900 mb-4">Scope Progress</h4>
+                                <div className="space-y-4">
+                                  {detailProject.scopes.map((scope) => {
+                                    const scopeTypeName =
+                                      typeof scope.scope_type === 'object'
+                                        ? scope.scope_type.name
+                                        : scope.scope_type_detail?.name || 'Unknown';
+                                    const percentComplete =
+                                      scope.percent_complete ??
+                                      (scope.qty_sq_ft > 0 ? (scope.installed / scope.qty_sq_ft) * 100 : 0);
+                                    const remaining = scope.remaining ?? scope.qty_sq_ft - scope.installed;
+
+                                    return (
+                                      <div key={scope.id} className="border rounded-lg p-4 bg-gray-50">
+                                        <div className="flex justify-between items-start mb-3">
+                                          <div>
+                                            <h5 className="font-semibold text-gray-900">{scopeTypeName}</h5>
+                                            {scope.description && (
+                                              <p className="text-sm text-gray-600 mt-1">{scope.description}</p>
+                                            )}
+                                          </div>
+                                          <span className="text-sm font-semibold text-gray-900">
+                                            {Number(percentComplete).toFixed(1)}%
+                                          </span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-3 mb-3">
+                                          <div
+                                            className={`h-3 rounded-full transition-all ${
+                                              percentComplete >= 100
+                                                ? 'bg-green-600'
+                                                : percentComplete >= 75
+                                                ? 'bg-blue-600'
+                                                : percentComplete >= 50
+                                                ? 'bg-yellow-500'
+                                                : 'bg-orange-500'
+                                            }`}
+                                            style={{ width: `${clampPercent(percentComplete)}%` }}
+                                          />
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                          <div>
+                                            <span className="text-gray-600">Total:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {Number(scope.qty_sq_ft).toLocaleString()} sq.ft
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">Installed:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {Number(scope.installed).toLocaleString()} sq.ft
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">Remaining:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {Number(remaining).toLocaleString()} sq.ft
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">Complete:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {Number(percentComplete).toFixed(1)}%
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mt-3 pt-3 border-t border-gray-200">
+                                          <div>
+                                            <span className="text-gray-600">Foreman:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {scope.foreman_detail?.name || 'N/A'}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">Start:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {formatDate(scope.estimation_start_date)}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">End:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {formatDate(scope.estimation_end_date)}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-600">Duration:</span>
+                                            <span className="text-gray-900 font-medium ml-1">
+                                              {scope.duration_days != null ? `${scope.duration_days} days` : 'N/A'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          )
+                        );
+                      })()}
+                    </div>
 
                     {/* Spectrum Data */}
                     {projectDetails?.spectrum_data && (
@@ -677,6 +936,77 @@ export default function BranchPortalPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Right - AI Summary */}
+        <div className="w-full lg:w-80 xl:w-96 bg-white border-t lg:border-t-0 lg:border-l border-gray-200 overflow-y-auto lg:h-[calc(100vh-200px)]">
+          <div className="p-6">
+            <Card>
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold text-gray-900">AI Project Summary</h3>
+                {selectedProject ? (() => {
+                  const detailProject = projectDetails?.project || selectedProject;
+                  const summary = buildAiSummary(detailProject);
+
+                  return (
+                    <div className="text-sm text-gray-700 space-y-3">
+                      <p>{summary.headline}</p>
+                      <p>{summary.totals}</p>
+                      <p>{summary.schedule}</p>
+                      <p>Project Manager: {summary.projectManager}</p>
+
+                      {summary.topRemaining.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Largest Remaining Scopes</p>
+                          <div className="space-y-1">
+                            {summary.topRemaining.map(({ scope, qty, installed }) => {
+                              const name =
+                                typeof scope.scope_type === 'object'
+                                  ? scope.scope_type.name
+                                  : scope.scope_type_detail?.name || 'Unknown';
+                              const remaining = Math.max(0, qty - installed);
+                              return (
+                                <div key={scope.id} className="text-xs text-gray-700">
+                                  {name}: {Number(remaining).toLocaleString()} remaining
+                                  {scope.foreman_detail?.name ? ` · Foreman: ${scope.foreman_detail.name}` : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {summary.topComplete.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Most Complete Scopes</p>
+                          <div className="space-y-1">
+                            {summary.topComplete.map(({ scope, pct }) => {
+                              const name =
+                                typeof scope.scope_type === 'object'
+                                  ? scope.scope_type.name
+                                  : scope.scope_type_detail?.name || 'Unknown';
+                              return (
+                                <div key={scope.id} className="text-xs text-gray-700">
+                                  {name}: {Number(pct).toFixed(1)}%
+                                  {scope.foreman_detail?.name ? ` · Foreman: ${scope.foreman_detail.name}` : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-xs text-gray-500">
+                        Project: {selectedProject.job_number} · {selectedProject.name || selectedProject.job_description}
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <p className="text-sm text-gray-600">Select a project to see its AI summary.</p>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

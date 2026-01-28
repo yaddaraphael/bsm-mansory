@@ -11,7 +11,6 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { useAuth } from '@/hooks/useAuth';
 import { useBranches } from '@/hooks/useBranches';
 import { useProject } from '@/hooks/useProjects';
-import { useSidebar } from '@/components/layout/SidebarContext';
 import api from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { PlusIcon } from '@heroicons/react/24/outline';
@@ -21,22 +20,11 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const router = useRouter();
   const { user } = useAuth();
-  const { isCollapsed } = useSidebar();
   const { project, loading: projectLoading } = useProject(id);
   const { branches, loading: branchesLoading } = useBranches({ status: 'ACTIVE' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState(false);
-  const [comprehensiveData, setComprehensiveData] = useState<{
-    phases?: Array<{
-      phase_code: string;
-      cost_type: string;
-      description: string;
-      status_code: string;
-      [key: string]: unknown;
-    }>;
-  } | null>(null);
-  const [loadingComprehensive, setLoadingComprehensive] = useState(false);
   const [scopeTypes, setScopeTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [foremen, setForemen] = useState<Array<{ id: number; name: string }>>([]);
   const [scopes, setScopes] = useState<Array<{
@@ -55,7 +43,6 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
     operators: string;
   }>>([]);
   const [editingScopeIndex, setEditingScopeIndex] = useState<number | null>(null);
-  const [showAddScope, setShowAddScope] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     branch: '',
@@ -74,28 +61,6 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
   const isCompletedFromSystem = project?.status === 'COMPLETED' || project?.spectrum_status_code === 'C';
   const isReadOnly = isCompletedFromSystem || !canEdit;
 
-
-  // Fetch comprehensive Spectrum data for phases (for reference only)
-  useEffect(() => {
-    const fetchComprehensiveData = async () => {
-      if (!project?.job_number) return;
-      
-      setLoadingComprehensive(true);
-      try {
-        const encodedJobNumber = encodeURIComponent(project.job_number);
-        const response = await api.get(`/spectrum/projects/${encodedJobNumber}/comprehensive/`);
-        setComprehensiveData(response.data);
-      } catch {
-        console.log('Comprehensive Spectrum data not available for this project');
-      } finally {
-        setLoadingComprehensive(false);
-      }
-    };
-    
-    if (project) {
-      fetchComprehensiveData();
-    }
-  }, [project]);
 
   // Fetch scope types and foremen
   useEffect(() => {
@@ -235,13 +200,26 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
       
       // Save/update scopes
       if (scopes.length > 0) {
+        type ScopePayload = {
+          project: number;
+          scope_type_id: number;
+          description: string;
+          qty_sq_ft: number;
+          saturdays: boolean;
+          full_weekends: boolean;
+          estimation_start_date?: string;
+          estimation_end_date?: string;
+          duration_days?: number;
+          foreman_id?: number;
+        };
+
         for (const scope of scopes) {
           // Skip scopes without a valid scope_type_id
           if (!scope.scope_type_id || scope.scope_type_id === 0) {
             continue;
           }
           
-          const scopePayload: any = {
+          const scopePayload: ScopePayload = {
             project: parseInt(id),
             scope_type_id: scope.scope_type_id,
             description: scope.description || '',
@@ -460,7 +438,6 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                               operators: '',
                             }]);
                             setEditingScopeIndex(scopes.length);
-                            setShowAddScope(true);
                           }}
                           className="flex items-center gap-2"
                         >
@@ -488,7 +465,6 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                                       <>
                                         <Button
                                           variant="primary"
-                                          size="sm"
                                           onClick={() => setEditingScopeIndex(null)}
                                         >
                                           Done
@@ -498,14 +474,12 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
                                       <>
                                         <Button
                                           variant="secondary"
-                                          size="sm"
                                           onClick={() => setEditingScopeIndex(idx)}
                                         >
                                           Edit
                                         </Button>
                                         <Button
                                           variant="danger"
-                                          size="sm"
                                           onClick={async () => {
                                             if (scope.id) {
                                               try {
@@ -881,4 +855,3 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
     </ProtectedRoute>
   );
 }
-

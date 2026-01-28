@@ -866,8 +866,7 @@ export default function SettingsPage() {
                                           <span>Active</span>
                                         </label>
                                         <Button
-                                          size="sm"
-                                          onClick={() => handleUpdateScopeType(st.id, {
+                                                                                    onClick={() => handleUpdateScopeType(st.id, {
                                             name: st.name,
                                             is_active: st.is_active
                                           })}
@@ -876,8 +875,7 @@ export default function SettingsPage() {
                                           <CheckIcon className="h-4 w-4" />
                                         </Button>
                                         <Button
-                                          size="sm"
-                                          variant="outline"
+                                                                                    variant="outline"
                                           onClick={() => {
                                             setEditingScopeType(null);
                                             // Reload to reset changes
@@ -900,15 +898,13 @@ export default function SettingsPage() {
                                       </div>
                                       <div className="flex gap-2">
                                         <Button
-                                          size="sm"
-                                          variant="secondary"
+                                                                                    variant="secondary"
                                           onClick={() => setEditingScopeType(st.id)}
                                         >
                                           <PencilIcon className="h-4 w-4" />
                                         </Button>
                                         <Button
-                                          size="sm"
-                                          variant="danger"
+                                                                                    variant="danger"
                                           onClick={() => setDeleteScopeTypeId(st.id)}
                                           isLoading={loadingScopeTypes}
                                         >
@@ -996,8 +992,7 @@ export default function SettingsPage() {
                                       <span>Active</span>
                                     </label>
                                     <Button
-                                      size="sm"
-                                      onClick={() => handleUpdateForeman(f.id, {
+                                                                            onClick={() => handleUpdateForeman(f.id, {
                                         name: f.name,
                                         is_active: f.is_active
                                       })}
@@ -1006,8 +1001,7 @@ export default function SettingsPage() {
                                       <CheckIcon className="h-4 w-4" />
                                     </Button>
                                     <Button
-                                      size="sm"
-                                      variant="outline"
+                                                                            variant="outline"
                                       onClick={() => {
                                         setEditingForeman(null);
                                         // Reload to reset changes
@@ -1029,15 +1023,13 @@ export default function SettingsPage() {
                                     </div>
                                     <div className="flex gap-2">
                                       <Button
-                                        size="sm"
-                                        variant="secondary"
+                                                                                variant="secondary"
                                         onClick={() => setEditingForeman(f.id)}
                                       >
                                         <PencilIcon className="h-4 w-4" />
                                       </Button>
                                         <Button
-                                          size="sm"
-                                          variant="danger"
+                                                                                    variant="danger"
                                           onClick={() => setDeleteForemanId(f.id)}
                                           isLoading={loadingForemen}
                                         >
@@ -1062,8 +1054,7 @@ export default function SettingsPage() {
                   isOpen={deleteScopeTypeId !== null}
                   onClose={() => setDeleteScopeTypeId(null)}
                   title="Delete Scope Type"
-                  size="sm"
-                >
+                                  >
                   <div className="space-y-4">
                     <p className="text-gray-700">
                       Are you sure you want to delete this scope type? This action will affect all projects using it and cannot be undone.
@@ -1096,8 +1087,7 @@ export default function SettingsPage() {
                   isOpen={deleteForemanId !== null}
                   onClose={() => setDeleteForemanId(null)}
                   title="Delete Foreman"
-                  size="sm"
-                >
+                                  >
                   <div className="space-y-4">
                     <p className="text-gray-700">
                       Are you sure you want to delete this foreman? This action will affect all projects using it and cannot be undone.

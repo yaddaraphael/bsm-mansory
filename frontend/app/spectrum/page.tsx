@@ -282,7 +282,6 @@ export default function SpectrumPage() {
   const [jobDates, setJobDates] = useState<SpectrumJobDates[]>([]);
   const [phases, setPhases] = useState<SpectrumPhase[]>([]);
   const [phasesEnhanced, setPhasesEnhanced] = useState<SpectrumPhaseEnhanced[]>([]);
-  const [costProjections, setCostProjections] = useState<SpectrumJobCostProjection[]>([]);
   const [jobUDFs, setJobUDFs] = useState<SpectrumJobUDF[]>([]);
   const [importedJobs, setImportedJobs] = useState<ImportedJob[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -306,8 +305,6 @@ export default function SpectrumPage() {
   const [pageSizePhases, setPageSizePhases] = useState(50);
   const [currentPagePhasesEnhanced, setCurrentPagePhasesEnhanced] = useState(1);
   const [pageSizePhasesEnhanced, setPageSizePhasesEnhanced] = useState(50);
-  const [currentPageCostProjections, setCurrentPageCostProjections] = useState(1);
-  const [pageSizeCostProjections, setPageSizeCostProjections] = useState(50);
   const [currentPageUDFs, setCurrentPageUDFs] = useState(1);
   const [pageSizeUDFs, setPageSizeUDFs] = useState(50);
   
@@ -340,7 +337,7 @@ export default function SpectrumPage() {
   const [filters, setFilters] = useState({
     company_code: 'BSM',
     division: '',
-    status_code: '',
+    status_code: 'ALL',
     project_manager: '',
     superintendent: '',
     estimator: '',
@@ -353,7 +350,7 @@ export default function SpectrumPage() {
   const [contactFilters, setContactFilters] = useState({
     company_code: 'BSM',
     job_number: '',
-    status_code: '',
+    status_code: 'ALL',
     project_manager: '',
     superintendent: '',
     estimator: '',
@@ -1097,16 +1094,12 @@ export default function SpectrumPage() {
   const paginatedJobMain = getPaginatedData(filteredJobMain, currentPageMain, pageSizeMain) as SpectrumJobMain[];
   const paginatedJobContacts = getPaginatedData(filteredJobContacts, currentPageContacts, pageSizeContacts) as SpectrumJobContact[];
   const paginatedJobDates = getPaginatedData(filteredJobDates, currentPageDates, pageSizeDates) as SpectrumJobDates[];
-  const paginatedPhases = getPaginatedData(filteredPhases, currentPagePhases, pageSizePhases) as SpectrumPhase[];
-  const paginatedPhasesEnhanced = getPaginatedData(filteredPhasesEnhanced, currentPagePhasesEnhanced, pageSizePhasesEnhanced) as SpectrumPhaseEnhanced[];
   const paginatedImportedJobs = getPaginatedData(filteredImportedJobs, currentPageImported, pageSizeImported) as ImportedJob[];
   
   const totalPages = getTotalPages(filteredJobs.length, pageSize);
   const totalPagesMain = getTotalPages(filteredJobMain.length, pageSizeMain);
   const totalPagesContacts = getTotalPages(filteredJobContacts.length, pageSizeContacts);
   const totalPagesDates = getTotalPages(filteredJobDates.length, pageSizeDates);
-  const totalPagesPhases = getTotalPages(filteredPhases.length, pageSizePhases);
-  const totalPagesPhasesEnhanced = getTotalPages(filteredPhasesEnhanced.length, pageSizePhasesEnhanced);
   const totalPagesImported = getTotalPages(filteredImportedJobs.length, pageSizeImported);
 
   // Pagination component
@@ -1388,7 +1381,7 @@ export default function SpectrumPage() {
                       onChange={(e) => setFilters({ ...filters, status_code: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">All (Active & Inactive)</option>
+                      <option value="ALL">All Statuses</option>
                       <option value="A">Active</option>
                       <option value="I">Inactive</option>
                       <option value="C">Complete</option>
@@ -1505,7 +1498,7 @@ export default function SpectrumPage() {
                       onChange={(e) => setFilters({ ...filters, status_code: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">All (Active & Inactive)</option>
+                      <option value="ALL">All Statuses</option>
                       <option value="A">Active</option>
                       <option value="I">Inactive</option>
                       <option value="C">Complete</option>
@@ -1556,7 +1549,7 @@ export default function SpectrumPage() {
                       onChange={(e) => setFilters({ ...filters, status_code: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">All (Active & Inactive)</option>
+                      <option value="ALL">All Statuses</option>
                       <option value="A">Active</option>
                       <option value="I">Inactive</option>
                       <option value="C">Complete</option>
@@ -1700,7 +1693,7 @@ export default function SpectrumPage() {
                       onChange={(e) => setContactFilters({ ...contactFilters, status_code: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">All (Active & Inactive)</option>
+                      <option value="ALL">All Statuses</option>
                       <option value="A">Active</option>
                       <option value="I">Inactive</option>
                       <option value="C">Complete</option>

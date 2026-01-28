@@ -8,7 +8,7 @@ import Card from '@/components/ui/Card';
 import StatusBadge from '@/components/ui/StatusBadge';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
-import { useProject } from '@/hooks/useProjects';
+import { useProject, type ProjectScope } from '@/hooks/useProjects';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useSidebar } from '@/components/layout/SidebarContext';
@@ -28,41 +28,51 @@ interface MeetingPhase {
 
 interface ScopeType {
   id: number;
-  code: string;
-  name: string;
-  is_active: boolean;
+  code?: string;
+  name?: string;
+  is_active?: boolean;
 }
 
 interface Foreman {
   id: number;
   name: string;
-  is_active: boolean;
+  is_active?: boolean;
 }
 
-interface ProjectScope {
-  id: number;
-  scope_type: number | ScopeType;
-  scope_type_id?: number;
-  scope_type_detail?: ScopeType;
-  description?: string;
-  estimation_start_date?: string;
-  estimation_end_date?: string;
-  duration_days?: number;
-  saturdays?: boolean;
-  full_weekends?: boolean;
-  qty_sq_ft?: number;
-  quantity?: number; // Alias for qty_sq_ft
-  installed?: number;
-  remaining?: number;
-  percent_complete?: number;
-  foreman?: number | Foreman | null;
-  foreman_id?: number;
-  foreman_detail?: Foreman;
-  masons?: number;
-  tenders?: number;
-  operators?: number;
-  [key: string]: unknown;
-}
+const normalizeScopeKey = (value?: string) =>
+  value ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+
+const getScopeKeyCandidates = (scope: ProjectScope) => {
+  const rawKeys: string[] = [];
+  if (typeof scope.scope_type === 'object' && scope.scope_type) {
+    if (scope.scope_type.name) rawKeys.push(scope.scope_type.name);
+    if (scope.scope_type.code) rawKeys.push(scope.scope_type.code);
+  } else if (typeof scope.scope_type === 'string') {
+    rawKeys.push(scope.scope_type);
+  }
+  if (scope.scope_type_detail?.name) rawKeys.push(scope.scope_type_detail.name);
+  if (scope.scope_type_detail?.code) rawKeys.push(scope.scope_type_detail.code);
+
+  return Array.from(
+    new Set(rawKeys.map((key) => normalizeScopeKey(key)).filter(Boolean))
+  );
+};
+
+const getMatchingPhasesForScope = (phases: MeetingPhase[], scope: ProjectScope) => {
+  const scopeKeys = getScopeKeyCandidates(scope);
+  if (scopeKeys.length === 0) return [];
+
+  const exact = phases.filter((phase) => {
+    const phaseKey = normalizeScopeKey(phase.phase_code);
+    return !!phaseKey && scopeKeys.some((key) => key === phaseKey);
+  });
+  if (exact.length > 0) return exact;
+
+  return phases.filter((phase) => {
+    const phaseKey = normalizeScopeKey(phase.phase_code);
+    return !!phaseKey && scopeKeys.some((key) => phaseKey.includes(key) || key.includes(phaseKey));
+  });
+};
 
 interface ComprehensiveProjectData {
   job: {
@@ -193,7 +203,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   
   const canEditDelete = user?.role === 'ROOT_SUPERADMIN';
   const canEditPhases = ['ROOT_SUPERADMIN', 'ADMIN', 'PROJECT_MANAGER'].includes(user?.role || '');
-  const canViewFinancial = !['FOREMAN', 'LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER'].includes(user?.role || '');
   
   // Check if project is completed
   const isCompleted = project?.status === 'COMPLETED' || project?.spectrum_status_code === 'C';
@@ -250,18 +259,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
     const map: Record<number, number> = {};
     for (const scope of project.scopes) {
-      const scopeTypeName = typeof scope.scope_type === 'object' && scope.scope_type?.name 
-        ? scope.scope_type.name 
-        : (scope.scope_type_detail?.name || String(scope.scope_type || ''));
-
-      if (!scopeTypeName) continue;
-
-      const matching = meetingPhases.filter((phase: MeetingPhase) =>
-        phase.phase_code && (
-          phase.phase_code.toUpperCase().includes(scopeTypeName.toUpperCase()) ||
-          scopeTypeName.toUpperCase().includes(phase.phase_code.toUpperCase())
-        )
-      );
+      const matching = getMatchingPhasesForScope(meetingPhases, scope);
+      if (matching.length === 0) {
+        map[scope.id] = Number(scope.installed || 0);
+        continue;
+      }
 
       const sorted = [...matching].sort((a, b) => {
         const aDate = a.meeting_date || a.updated_at || '';
@@ -356,9 +358,13 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       </ProtectedRoute>
     );
   }
+  if (!project) {
+    return null;
+  }
 
   // Show "COMPLETED" status for completed projects, otherwise use schedule status
   const scheduleStatus = isCompleted ? 'COMPLETED' : (project.schedule_status?.status || 'GREEN');
+  const projectScopes = project.scopes || [];
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
@@ -388,7 +394,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
     setSavingScope(scopeId);
     try {
-      const scope = project.scopes.find((s: ProjectScope) => s.id === scopeId);
+      const scope = projectScopes.find((s: ProjectScope) => s.id === scopeId);
       if (!scope) return;
 
       const updatedData: Partial<ProjectScope> = {
@@ -443,7 +449,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         return;
       }
 
-      const scopeData: any = {
+      type ScopePayload = {
+        project: number;
+        scope_type_id: number;
+        description: string;
+        saturdays: boolean;
+        full_weekends: boolean;
+        qty_sq_ft: number;
+        estimation_start_date?: string;
+        estimation_end_date?: string;
+        duration_days?: number;
+        foreman_id?: number;
+      };
+
+      const scopeData: ScopePayload = {
         project: project.id,
         scope_type_id: scopeTypeId,
         description: newScope.description || '',
@@ -476,7 +495,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       setShowAddScopeModal(false);
       setNewScope({});
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { detail?: string; [key: string]: any } } };
+      const error = err as { response?: { data?: { detail?: string } & Record<string, string[] | string> } };
       let errorMessage = 'Failed to create scope';
       
       if (error.response?.data) {
@@ -595,7 +614,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     <div>
                       <label className="text-sm font-medium text-gray-500 block mb-1">Status</label>
                       <p className="text-base text-gray-900 font-medium">
-                        <StatusBadge status={project.status} size="sm" />
+                        <StatusBadge status={project.status || 'PENDING'} size="sm" />
                       </p>
                     </div>
                     {project.client_name && (
@@ -680,9 +699,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           </p>
                         </div>
                         <div>
-                          <label className="text-sm font-medium text-gray-500 block mb-1">Days Late</label>
-                          <p className={`text-base font-medium ${project.schedule_status.days_late > 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                            {project.schedule_status.days_late || 0} {project.schedule_status.days_late === 1 ? 'day' : 'days'}
+                        <label className="text-sm font-medium text-gray-500 block mb-1">Days Late</label>
+                          <p className={`text-base font-medium ${(project.schedule_status?.days_late ?? 0) > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                            {project.schedule_status?.days_late ?? 0} {(project.schedule_status?.days_late ?? 0) === 1 ? 'day' : 'days'}
                           </p>
                         </div>
                       </>
@@ -701,11 +720,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 <Card title="Progress">
                   <div className="space-y-4 md:space-y-6 w-full">
                     {(() => {
-                      const totalQty = (project.scopes || []).reduce(
-                        (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                      const totalQty = projectScopes.reduce(
+                        (acc: number, s: ProjectScope) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
                         0
                       );
-                      const totalInstalled = (project.scopes || []).reduce((acc, s) => {
+                      const totalInstalled = projectScopes.reduce((acc: number, s: ProjectScope) => {
                         const scoped = installedByScope[s.id];
                         return acc + Number(scoped ?? s.installed ?? 0);
                       }, 0);
@@ -732,8 +751,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       <div className="text-center">
                         <label className="text-xs font-medium text-gray-500 block mb-1">Total Quantity</label>
                         <p className="text-xl font-bold text-gray-900">
-                          {(project.scopes || []).reduce(
-                            (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                          {projectScopes.reduce(
+                            (acc: number, s: ProjectScope) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
                             0
                           )}
                         </p>
@@ -741,7 +760,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       <div className="text-center">
                         <label className="text-xs font-medium text-gray-500 block mb-1">Installed</label>
                         <p className="text-xl font-bold text-green-600">
-                          {(project.scopes || []).reduce((acc, s) => {
+                          {projectScopes.reduce((acc: number, s: ProjectScope) => {
                             const scoped = installedByScope[s.id];
                             return acc + Number(scoped ?? s.installed ?? 0);
                           }, 0)}
@@ -751,11 +770,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         <label className="text-xs font-medium text-gray-500 block mb-1">Remaining</label>
                         <p className="text-xl font-bold text-orange-600">
                           {(() => {
-                            const totalQty = (project.scopes || []).reduce(
-                              (acc, s) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
+                            const totalQty = projectScopes.reduce(
+                              (acc: number, s: ProjectScope) => acc + Number(s.qty_sq_ft ?? s.quantity ?? 0),
                               0
                             );
-                            const totalInstalled = (project.scopes || []).reduce((acc, s) => {
+                            const totalInstalled = projectScopes.reduce((acc: number, s: ProjectScope) => {
                               const scoped = installedByScope[s.id];
                               return acc + Number(scoped ?? s.installed ?? 0);
                             }, 0);
@@ -784,8 +803,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     )}
                     
                     {/* Project Scopes */}
-                    {project.scopes && project.scopes.length > 0 ? (
-                      project.scopes.map((scope: ProjectScope) => {
+                    {projectScopes.length > 0 ? (
+                      projectScopes.map((scope: ProjectScope) => {
                         const scopeTypeName = typeof scope.scope_type === 'object' && scope.scope_type?.name 
                           ? scope.scope_type.name 
                           : (scope.scope_type_detail?.name || String(scope.scope_type || 'N/A'));
@@ -794,12 +813,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                           : (scope.scope_type_id || scope.scope_type_detail?.id);
                         
                         // Find matching meeting phases for installed quantity updates
-                        const matchingMeetingPhases = meetingPhases.filter((phase: MeetingPhase) =>
-                          phase.phase_code && scopeTypeName && (
-                            phase.phase_code.toUpperCase().includes(scopeTypeName.toUpperCase()) ||
-                            scopeTypeName.toUpperCase().includes(phase.phase_code.toUpperCase())
-                          )
-                        );
+                        const matchingMeetingPhases = getMatchingPhasesForScope(meetingPhases, scope);
 
                         const totalQuantity = scope.qty_sq_ft ?? scope.quantity ?? 0;
                         const installedFromMeetings = installedByScope[scope.id] ?? scope.installed ?? 0;

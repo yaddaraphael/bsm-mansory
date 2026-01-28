@@ -8,6 +8,7 @@ import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { useProjects } from '@/hooks/useProjects';
+import type { Project, ProjectScope } from '@/hooks/useProjects';
 import api from '@/lib/api';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
@@ -33,21 +34,6 @@ export default function NewDailyReportPage() {
     last_name: string;
     employee_id?: string;
     employee_number?: string;
-  }
-
-  interface ProjectScope {
-    id: number;
-    scope_type: string;
-    description?: string;
-    unit?: string;
-  }
-
-  interface Project {
-    id: number;
-    job_number: string;
-    name: string;
-    work_location?: string;
-    scopes?: ProjectScope[];
   }
 
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -84,6 +70,13 @@ export default function NewDailyReportPage() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [error, setError] = useState<string>('');
 
+  const getScopeKey = (scope: ProjectScope) => {
+    if (typeof scope.scope_type === 'object') {
+      return scope.scope_type.name || scope.scope_type.code || String(scope.scope_type.id);
+    }
+    return String(scope.scope_type);
+  };
+
   useEffect(() => {
     fetchEmployees();
   }, []);
@@ -91,18 +84,18 @@ export default function NewDailyReportPage() {
   useEffect(() => {
     if (formData.project) {
       const project = projects.find((p) => p.id.toString() === formData.project);
-      setSelectedProject(project);
+      setSelectedProject(project ?? null);
       if (project) {
         // Auto-populate location from project
         if (project.work_location) {
-          setFormData((prev) => ({ ...prev, location: project.work_location }));
+          setFormData((prev) => ({ ...prev, location: project.work_location || '' }));
         }
         
         // Initialize installed quantities from scopes
         if (project.scopes) {
           const quantities: Record<string, number> = {};
           project.scopes.forEach((scope: ProjectScope) => {
-            quantities[scope.scope_type] = 0;
+            quantities[getScopeKey(scope)] = 0;
           });
           setFormData((prev) => ({ ...prev, installed_quantities: quantities }));
         }
@@ -331,8 +324,8 @@ export default function NewDailyReportPage() {
                         >
                           <option value="">Select a scope...</option>
                           {selectedProject.scopes.map((scope: ProjectScope) => (
-                            <option key={scope.id} value={scope.scope_type}>
-                              {scope.scope_type}
+                            <option key={scope.id} value={getScopeKey(scope)}>
+                              {getScopeKey(scope)}
                             </option>
                           ))}
                         </select>
@@ -514,8 +507,8 @@ export default function NewDailyReportPage() {
                                     >
                                       <option value="">Select scope...</option>
                                       {selectedProject.scopes.map((scope: ProjectScope) => (
-                                        <option key={scope.id} value={scope.scope_type}>
-                                          {scope.scope_type}
+                                        <option key={scope.id} value={getScopeKey(scope)}>
+                                          {getScopeKey(scope)}
                                         </option>
                                       ))}
                                     </select>
@@ -688,15 +681,15 @@ export default function NewDailyReportPage() {
                       {selectedProject.scopes.map((scope: ProjectScope) => (
                         <div key={scope.id}>
                           <label className="block text-sm font-medium text-gray-700 mb-2">
-                            {scope.scope_type} ({scope.unit})
+                            {getScopeKey(scope)}
                           </label>
                           <Input
                             type="number"
                             min="0"
                             step="0.01"
-                            value={formData.installed_quantities[scope.scope_type] || 0}
+                            value={formData.installed_quantities[getScopeKey(scope)] || 0}
                             onChange={(e) =>
-                              updateQuantity(scope.scope_type, parseFloat(e.target.value) || 0)
+                              updateQuantity(getScopeKey(scope), parseFloat(e.target.value) || 0)
                             }
                           />
                         </div>

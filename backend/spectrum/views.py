@@ -147,13 +147,17 @@ def get_jobs_from_spectrum(request):
         logger.info(f"Division: {division}, Status: {status_code}, Sort By: {sort_by}")
         logger.info(f"Project Manager: {project_manager}, Superintendent: {superintendent}")
         
+        # Allow explicit "ALL" to mean A + I + C
+        if not status_code or status_code == 'ALL':
+            status_code = None
+
         # Fetch jobs from Spectrum
         # If no division is specified, fetch all jobs by looping through all divisions
         if division:
-            # If a specific division is requested, fetch only that division
-            jobs = client.get_jobs(
+            # If a specific division is requested, loop statuses if none was specified
+            jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                division=division,
+                divisions=[division],
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -167,7 +171,7 @@ def get_jobs_from_spectrum(request):
             logger.info("No division specified, fetching all jobs by looping through divisions...")
             jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -244,14 +248,18 @@ def import_jobs_to_database(request):
         customer_code = request.data.get('customer_code', None)
         cost_center = request.data.get('cost_center', None)
         sort_by = request.data.get('sort_by', None)
+
+        # Allow explicit "ALL" to mean A + I + C
+        if not status_code or status_code == 'ALL':
+            status_code = None
         
         # Fetch jobs from Spectrum GetJob service using division looping to get all jobs
         # If no division is specified, fetch all jobs by looping through all divisions
         if division:
-            # If a specific division is requested, fetch only that division
-            jobs = client.get_jobs(
+            # If a specific division is requested, loop statuses if none was specified
+            jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                division=division,
+                divisions=[division],
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -260,9 +268,9 @@ def import_jobs_to_database(request):
                 cost_center=cost_center,
                 sort_by=sort_by
             )
-            jobs_main = client.get_job_main(
+            jobs_main = client.get_all_job_main_by_division(
                 company_code=company_code,
-                division=division,
+                divisions=[division],
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -276,7 +284,7 @@ def import_jobs_to_database(request):
             logger.info("No division specified, fetching all jobs by looping through divisions...")
             jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -287,7 +295,7 @@ def import_jobs_to_database(request):
             )
             jobs_main = client.get_all_job_main_by_division(
                 company_code=company_code,
-                divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -312,9 +320,9 @@ def import_jobs_to_database(request):
         try:
             # Fetch job dates using same filters as jobs
             if division:
-                job_dates_list = client.get_job_dates(
+                job_dates_list = client.get_all_job_dates_by_division(
                     company_code=company_code,
-                    division=division,
+                    divisions=[division],
                     status_code=status_code,
                 )
             else:
@@ -322,7 +330,7 @@ def import_jobs_to_database(request):
                 logger.info("Fetching all job dates by looping through divisions...")
                 job_dates_list = client.get_all_job_dates_by_division(
                     company_code=company_code,
-                    divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                    divisions=None,  # Use defaults from settings
                     status_code=status_code,
                 )
             
@@ -606,6 +614,7 @@ def import_jobs_to_database(request):
                                 '131': 'SLC Commercial',
                                 '135': 'Utah Commercial',
                                 '145': 'St George',
+                                '115': 'KC Residential',
                             }
                             division_name = division_names.get(division_code, f'Division {division_code}')
                             
@@ -1099,13 +1108,16 @@ def get_job_main_from_spectrum(request):
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
+        if not status_code or status_code == 'ALL':
+            status_code = None
+
         # Fetch jobs from Spectrum GetJobMain service using division looping to get all jobs
         # If no division is specified, fetch all jobs by looping through all divisions
         if division:
-            # If a specific division is requested, fetch only that division
-            jobs = client.get_job_main(
+            # If a specific division is requested, loop statuses if none was specified
+            jobs = client.get_all_job_main_by_division(
                 company_code=company_code,
-                division=division,
+                divisions=[division],
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -1119,7 +1131,7 @@ def get_job_main_from_spectrum(request):
             logger.info("No division specified, fetching all job main data by looping through divisions...")
             jobs = client.get_all_job_main_by_division(
                 company_code=company_code,
-                divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
                 superintendent=superintendent,
@@ -1254,33 +1266,24 @@ def get_job_dates_from_spectrum(request):
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
+        if not status_code or status_code == 'ALL':
+            status_code = None
+
         # Fetch job dates from Spectrum using looping to get all dates
         if division:
-            # If a specific division is requested, fetch only that division
-            dates = client.get_job_dates(
+            # If a specific division is requested, loop statuses if none was specified
+            dates = client.get_all_job_dates_by_division(
                 company_code=company_code,
-                division=division,
+                divisions=[division],
                 status_code=status_code,
-                project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
-                customer_code=customer_code,
-                cost_center=cost_center,
-                sort_by=sort_by
             )
         else:
             # No division specified - fetch all dates by looping through all divisions
             logger.info("No division specified, fetching all job dates by looping through divisions...")
             dates = client.get_all_job_dates_by_division(
                 company_code=company_code,
-                divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
+                divisions=None,  # Use defaults from settings
                 status_code=status_code,
-                project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
-                customer_code=customer_code,
-                cost_center=cost_center,
-                sort_by=sort_by
             )
         
         # Add division information to dates by looking up from SpectrumJob

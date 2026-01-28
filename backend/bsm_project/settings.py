@@ -206,9 +206,9 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 
 # OAuth Settings
 # Microsoft Azure AD
-MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='95e54424-01a1-4896-8ba4-eb8ad24b1d83')
-MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='b02aa628-b02e-414c-82f1-7d868c45f0b8')
-MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='95339773-e6b8-47aa-bbb7-e3d6daee096a')
+MICROSOFT_CLIENT_ID = config('MICROSOFT_CLIENT_ID', default='')
+MICROSOFT_CLIENT_SECRET = config('MICROSOFT_CLIENT_SECRET', default='')
+MICROSOFT_TENANT_ID = config('MICROSOFT_TENANT_ID', default='')
 MICROSOFT_REDIRECT_URI = config('MICROSOFT_REDIRECT_URI', default=f'{FRONTEND_URL}/api/auth/oauth/microsoft/callback/')
 
 # Google OAuth
@@ -221,6 +221,11 @@ SPECTRUM_ENDPOINT = config('SPECTRUM_ENDPOINT', default='https://buildersstonekc
 SPECTRUM_AUTHORIZATION_ID = config('SPECTRUM_AUTHORIZATION_ID', default='')
 SPECTRUM_COMPANY_CODE = config('SPECTRUM_COMPANY_CODE', default='BSM')
 SPECTRUM_TIMEOUT = config('SPECTRUM_TIMEOUT', default=30, cast=int)
+SPECTRUM_DIVISIONS = [
+    d.strip()
+    for d in config('SPECTRUM_DIVISIONS', default='111,121,131,135,145,115').split(',')
+    if d.strip()
+]
 
 # Public Portal Settings
 # Password for HQ public portal (all projects). Leave blank to disable.

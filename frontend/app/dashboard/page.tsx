@@ -8,7 +8,6 @@ import { useProjects } from '@/hooks/useProjects';
 import { useAuth } from '@/hooks/useAuth';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Card from '@/components/ui/Card';
-import StatusBadge from '@/components/ui/StatusBadge';
 import api from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import {
@@ -20,7 +19,6 @@ import {
   CurrencyDollarIcon,
   BuildingOfficeIcon,
   PlusIcon,
-  ArrowRightIcon,
 } from '@heroicons/react/24/outline';
 
 interface DashboardStats {
@@ -167,20 +165,18 @@ export default function DashboardPage() {
 
             {/* Role-specific dashboard content */}
             {role === 'PROJECT_MANAGER' && (
-              <ProjectManagerDashboard stats={stats} loading={loading} projects={projects} />
+              <ProjectManagerDashboard stats={stats} loading={loading} />
             )}
 
             {role === 'FOREMAN' && (
               <ForemanDashboard 
                 stats={stats} 
-                loading={loading} 
               />
             )}
 
             {(role === 'LABORER' || role === 'MASON' || role === 'OPERATOR' || role === 'BRICKLAYER' || role === 'PLASTER') && (
               <WorkerDashboard 
                 stats={stats} 
-                loading={loading} 
               />
             )}
 
@@ -201,7 +197,7 @@ export default function DashboardPage() {
             )}
 
             {(role === 'ROOT_SUPERADMIN' || role === 'SUPERADMIN' || role === 'ADMIN') && (
-              <AdminDashboard stats={stats} loading={loading} projects={projects} />
+              <AdminDashboard stats={stats} loading={loading} />
             )}
 
             {role === 'AUDITOR' && (
@@ -242,88 +238,6 @@ interface User {
   role: string;
   role_display?: string;
   username?: string;
-}
-
-interface LimitedUsersByRoleSectionProps {
-  usersByRole: Record<string, User[]>;
-  router: ReturnType<typeof useRouter>;
-}
-
-// Helper component to display users by role (limited for dashboard)
-function LimitedUsersByRoleSection({ usersByRole, router }: LimitedUsersByRoleSectionProps) {
-  if (!usersByRole || Object.keys(usersByRole).length === 0) {
-    return (
-      <Card title="All Users by Role">
-        <p className="text-center text-gray-500 py-4">No users found</p>
-      </Card>
-    );
-  }
-
-  const roleOrder = [
-    'ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN', 'SYSTEM_ADMIN',
-    'PROJECT_MANAGER', 'SUPERINTENDENT', 'GENERAL_CONTRACTOR', 'FOREMAN',
-    'LABORER', 'MASON', 'OPERATOR', 'BRICKLAYER', 'PLASTER',
-    'HR', 'FINANCE', 'AUDITOR'
-  ];
-
-  // Get total users count
-  const totalUsers = Object.values(usersByRole).reduce((sum: number, users: User[] | undefined) => sum + (users?.length || 0), 0);
-  
-  // Limit to first 6 users across all roles
-  let displayedCount = 0;
-  const maxDisplay = 6;
-
-  return (
-    <Card title="All Users by Role">
-      <div className="space-y-4">
-        {roleOrder.map((roleKey) => {
-          const users = usersByRole[roleKey] || [];
-          if (users.length === 0 || displayedCount >= maxDisplay) return null;
-
-          const roleDisplay = users[0]?.role_display || roleKey;
-          const usersToShow = users.slice(0, maxDisplay - displayedCount);
-          displayedCount += usersToShow.length;
-          
-          return (
-            <div key={roleKey} className="border-b last:border-0 pb-3 last:pb-0">
-              <h4 className="font-semibold text-gray-900 mb-2 flex items-center text-sm">
-                <UserGroupIcon className="h-4 w-4 mr-2 text-primary" />
-                {roleDisplay} ({users.length})
-              </h4>
-              <div className="space-y-1">
-                {usersToShow.map((u: User) => (
-                  <div
-                    key={u.id}
-                    className="flex items-center space-x-2 p-2 rounded hover:bg-gray-50 cursor-pointer"
-                    onClick={() => router.push(`/users/${u.id}`)}
-                  >
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">
-                        {u.first_name || u.username}
-                        {u.last_name && ` ${u.last_name}`}
-                      </p>
-                      <p className="text-xs text-gray-500">{u.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        {totalUsers > maxDisplay && (
-          <div className="pt-2 border-t">
-            <button
-              onClick={() => router.push('/users')}
-              className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm text-primary hover:bg-primary/10 rounded-lg transition-colors"
-            >
-              <span>View All Users ({totalUsers})</span>
-              <ArrowRightIcon className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    </Card>
-  );
 }
 
 // Helper component to display users by role (full version for other dashboards)
@@ -386,18 +300,10 @@ function UsersByRoleSection({ usersByRole, title = 'Users by Role' }: UsersByRol
 interface AdminDashboardProps {
   stats: DashboardStats | null;
   loading: boolean;
-  projects: Project[];
-}
-
-interface Project {
-  id: number;
-  name: string;
-  job_number: string;
-  status: string;
 }
 
 // Admin Dashboard Component
-function AdminDashboard({ stats, loading, projects }: AdminDashboardProps) {
+function AdminDashboard({ stats, loading }: AdminDashboardProps) {
   const router = useRouter();
   
   return (
@@ -775,7 +681,6 @@ function BranchManagerDashboard({ stats, loading }: BranchManagerDashboardProps)
 interface ProjectManagerDashboardProps {
   stats: DashboardStats | null;
   loading: boolean;
-  projects?: Project[];
 }
 
 function ProjectManagerDashboard({ stats, loading }: ProjectManagerDashboardProps) {
@@ -944,10 +849,9 @@ function ProjectManagerDashboard({ stats, loading }: ProjectManagerDashboardProp
 // Foreman Dashboard
 interface ForemanDashboardProps {
   stats: DashboardStats | null;
-  loading: boolean;
 }
 
-function ForemanDashboard({ stats, loading }: ForemanDashboardProps) {
+function ForemanDashboard({ stats }: ForemanDashboardProps) {
   return (
     <div className="space-y-4 md:space-y-6">
       {stats?.crew_members && stats.crew_members.length > 0 && (
@@ -971,10 +875,9 @@ function ForemanDashboard({ stats, loading }: ForemanDashboardProps) {
 // Worker Dashboard
 interface WorkerDashboardProps {
   stats: DashboardStats | null;
-  loading: boolean;
 }
 
-function WorkerDashboard({ stats, loading }: WorkerDashboardProps) {
+function WorkerDashboard({ stats }: WorkerDashboardProps) {
   return (
     <div className="space-y-4 md:space-y-6">
       {stats?.crew_members && stats.crew_members.length > 0 && (
