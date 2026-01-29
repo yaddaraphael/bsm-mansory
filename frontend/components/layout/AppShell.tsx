@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import Sidebar from './Sidebar';
 import Header from './Header';
@@ -19,7 +19,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
+      <Suspense fallback={<div className="w-64 shrink-0" />}>
+        <Sidebar />
+      </Suspense>
       <div className="flex-1 flex flex-col min-w-0 sidebar-content">
         <Header />
         {children}
