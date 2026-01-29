@@ -561,7 +561,7 @@ export default function HQPortalPage() {
       });
     });
 
-    const sortedScopes = [...scopeProjectCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const sortedScopes = Array.from(scopeProjectCounts.entries()).sort((a, b) => b[1] - a[1]);
     const topScopes = sortedScopes.slice(0, 3);
     const otherScopesCount = sortedScopes.slice(3).reduce((sum, [, count]) => sum + count, 0);
 

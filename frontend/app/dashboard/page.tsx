@@ -216,8 +216,8 @@ export default function DashboardPage() {
     let nextUrl: string | null = '/projects/scopes/?page_size=500&page=1';
 
     while (nextUrl) {
-     const scopesResponse = await api.get<ScopesApiResponse>(nextUrl);
-     const payload = scopesResponse.data;
+     const scopesResponse: { data: ScopesApiResponse } = await api.get(nextUrl);
+     const payload: ScopesApiResponse = scopesResponse.data;
      scopes.push(...normalizeScopesPayload(payload));
 
      if (payload && typeof payload === 'object' && 'next' in payload) {
@@ -232,7 +232,9 @@ export default function DashboardPage() {
     );
 
     scopes.forEach((scope) => {
-     const rawProject = scope.project ?? (scope as { project_id?: number }).project_id;
+     const rawProject =
+      (scope as { project?: number | { id?: number } }).project ??
+      (scope as { project_id?: number }).project_id;
      const projectId =
       typeof rawProject === 'number'
        ? rawProject
@@ -288,7 +290,7 @@ export default function DashboardPage() {
  }
 
  const role = user?.role;
- const chartStats = (() => {
+  const chartStats = (() => {
   const activeProjects = chartProjects;
   const activeProjectIds = new Set(activeProjects.map((project) => project.id));
 
@@ -301,7 +303,9 @@ export default function DashboardPage() {
   const scopeCompletion: number[] = [];
 
   effectiveScopes.forEach((scope) => {
-   const rawProject = scope.project ?? (scope as { project_id?: number }).project_id;
+   const rawProject =
+    (scope as { project?: number | { id?: number } }).project ??
+    (scope as { project_id?: number }).project_id;
    const projectId =
     typeof rawProject === 'number'
      ? rawProject
@@ -331,7 +335,7 @@ export default function DashboardPage() {
    (project) => isStartedProject(project) && projectProgressMap.get(project.id)
   );
 
-  const sortedScopes = [...scopeProjectCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const sortedScopes = Array.from(scopeProjectCounts.entries()).sort((a, b) => b[1] - a[1]);
   const topScopes = sortedScopes.slice(0, 3);
   const otherScopesCount = sortedScopes.slice(3).reduce((sum, [, count]) => sum + count, 0);
 
