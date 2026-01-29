@@ -118,10 +118,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         include_scopes = self.action in {'retrieve', 'create', 'update', 'partial_update'}
+        if self.action == 'list':
+            include_scopes = include_scopes or (self.request.query_params.get('include_scopes') == '1')
         return _annotated_projects_queryset(include_scopes=include_scopes)
 
     def get_serializer_class(self):
         if self.action == 'list':
+            if self.request.query_params.get('include_scopes') == '1':
+                return ProjectSerializer
             return ProjectListSerializer
         return ProjectSerializer
 

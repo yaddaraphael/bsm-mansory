@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
-import { useProjects } from '@/hooks/useProjects';
+import { useProjects, type Project as ChartsProject, type ProjectScope } from '@/hooks/useProjects';
 import { useAuth } from '@/hooks/useAuth';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Card from '@/components/ui/Card';
@@ -57,6 +57,95 @@ interface DashboardStats {
  division_name?: string;
 }
 
+type ProjectsApiResponse = { results?: ChartsProject[] } | ChartsProject[];
+type ScopesApiResponse = { results?: ChartScope[]; next?: string | null } | ChartScope[];
+
+type ChartScope = ProjectScope & { project?: number };
+
+function normalizeProjectsPayload(data: ProjectsApiResponse | unknown): ChartsProject[] {
+ if (Array.isArray(data)) return data;
+ if (data && typeof data === 'object' && Array.isArray((data as { results?: ChartsProject[] }).results)) {
+  return (data as { results?: ChartsProject[] }).results || [];
+ }
+ return [];
+}
+
+function normalizeScopesPayload(data: ScopesApiResponse | unknown): ChartScope[] {
+ if (Array.isArray(data)) return data as ChartScope[];
+ if (data && typeof data === 'object' && Array.isArray((data as { results?: ChartScope[] }).results)) {
+  return (data as { results?: ChartScope[] }).results || [];
+ }
+ return [];
+}
+
+function isStartedProject(project: ChartsProject) {
+ if (!project.start_date) return false;
+ const start = new Date(project.start_date);
+ if (Number.isNaN(start.getTime())) return false;
+ return start <= new Date();
+}
+
+function scopeHasProgress(scope: ProjectScope) {
+ const pct = scope.percent_complete;
+ if (pct != null && Number(pct) > 1) return true;
+ const qty = Number(scope.qty_sq_ft ?? scope.quantity ?? 0);
+ const installed = Number(scope.installed ?? 0);
+ if (qty <= 0) return false;
+ return (installed / qty) * 100 > 1;
+}
+
+function projectHasScopeProgress(project: ChartsProject) {
+ if (!Array.isArray(project.scopes) || project.scopes.length === 0) return false;
+ return project.scopes.some((scope) => scopeHasProgress(scope));
+}
+
+function getScopeName(scope: ProjectScope) {
+ if (typeof scope.scope_type === 'object') return scope.scope_type.name || 'Unknown';
+ return scope.scope_type_detail?.name || 'Unknown';
+}
+
+function PieChart({
+ title,
+ data,
+}: {
+ title: string;
+ data: Array<{ label: string; value: number; color: string }>;
+}) {
+ const total = data.reduce((sum, item) => sum + item.value, 0);
+ const segments = total > 0
+  ? data.map((item) => `${item.color} ${(item.value / total) * 100}%`).join(', ')
+  : '#e5e7eb 100%';
+
+ return (
+  <div className="border rounded-lg p-4 bg-white">
+   <h4 className="text-sm font-semibold text-gray-900 mb-3">{title}</h4>
+   <div className="flex items-center gap-4">
+    <div
+     className="h-24 w-24 md:h-28 md:w-28 rounded-full"
+     style={{ background: `conic-gradient(${segments})` }}
+     aria-label={title}
+    />
+    <div className="space-y-2 text-sm w-full">
+     {data.map((item) => (
+      <div key={item.label} className="flex items-center gap-2">
+       <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+       <span className="text-gray-700">{item.label}</span>
+       <span className="text-gray-900 font-semibold ml-auto">
+        {item.value}
+        {total > 0 && (
+         <span className="text-gray-500 font-normal ml-1">
+          ({((item.value / total) * 100).toFixed(1)}%)
+         </span>
+        )}
+       </span>
+      </div>
+     ))}
+    </div>
+   </div>
+  </div>
+ );
+}
+
 
 export default function DashboardPage() {
  const router = useRouter();
@@ -65,6 +154,9 @@ export default function DashboardPage() {
  const [stats, setStats] = useState<DashboardStats | null>(null);
  const [loading, setLoading] = useState(true);
  const { projects, loading: projectsLoading } = useProjects({ status: 'ACTIVE' });
+ const [chartProjects, setChartProjects] = useState<ChartsProject[]>([]);
+ const [chartScopes, setChartScopes] = useState<ChartScope[]>([]);
+ const [chartsLoading, setChartsLoading] = useState(false);
 
 
  const fetchStats = useCallback(async () => {
@@ -96,29 +188,165 @@ export default function DashboardPage() {
   }
  }, []);
 
+ const fetchChartProjects = useCallback(async () => {
+  try {
+   setChartsLoading(true);
+   const isAdmin = ['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN'].includes(user?.role || '');
+   const branchFilter = user?.role === 'BRANCH_MANAGER' && user?.division
+    ? String(user.division)
+    : '';
+
+   const response = await api.get<ProjectsApiResponse>('/projects/projects/', {
+    params: {
+     status: 'ACTIVE',
+     include_scopes: 1,
+     page_size: 300,
+     page: 1,
+     ...(isAdmin ? {} : branchFilter ? { branch: branchFilter } : {}),
+    },
+   });
+   const projectsData = normalizeProjectsPayload(response.data);
+   const hasScopes = projectsData.some(
+    (project) => Array.isArray(project.scopes) && project.scopes.length > 0
+   );
+
+   if (!hasScopes && projectsData.length > 0) {
+    // Fallback: fetch scopes and attach locally for chart calculations
+    const scopes: ChartScope[] = [];
+    let nextUrl: string | null = '/projects/scopes/?page_size=500&page=1';
+
+    while (nextUrl) {
+     const scopesResponse = await api.get<ScopesApiResponse>(nextUrl);
+     const payload = scopesResponse.data;
+     scopes.push(...normalizeScopesPayload(payload));
+
+     if (payload && typeof payload === 'object' && 'next' in payload) {
+      nextUrl = (payload as { next?: string | null }).next || null;
+     } else {
+      nextUrl = null;
+     }
+    }
+
+    const projectMap = new Map<number, ChartsProject>(
+     projectsData.map((project) => [project.id, { ...project, scopes: [] }])
+    );
+
+    scopes.forEach((scope) => {
+     const rawProject = scope.project ?? (scope as { project_id?: number }).project_id;
+     const projectId =
+      typeof rawProject === 'number'
+       ? rawProject
+       : typeof rawProject === 'object' && rawProject !== null && 'id' in rawProject
+       ? Number((rawProject as { id?: number }).id)
+       : Number(rawProject);
+
+     if (!projectId) return;
+
+     const project = projectMap.get(projectId);
+     if (project) {
+      project.scopes = [...(project.scopes || []), scope];
+     }
+    });
+
+    setChartProjects(Array.from(projectMap.values()));
+    setChartScopes(scopes);
+   } else {
+    setChartProjects(projectsData);
+    const aggregatedScopes = projectsData.flatMap((project) => project.scopes || []);
+    setChartScopes(aggregatedScopes);
+   }
+  } catch (error) {
+   console.error('Failed to fetch chart projects:', error);
+   setChartProjects([]);
+  } finally {
+   setChartsLoading(false);
+  }
+ }, [user]);
+
  // Fetch stats on mount and set up auto-refresh every minute
  useEffect(() => {
   if (user) {
    // Fetch immediately
    fetchStats();
+   fetchChartProjects();
    
-   // Set up interval to fetch every minute (60000ms)
+   // Set up interval to fetch every hour (3600000ms)
    const intervalId = setInterval(() => {
     fetchStats();
-   }, 60000); // 60 seconds = 1 minute
+    fetchChartProjects();
+   }, 3600000); // 60 minutes = 1 hour
    
    // Cleanup interval on unmount or when user changes
    return () => {
     clearInterval(intervalId);
    };
   }
- }, [user, fetchStats]);
+ }, [user, fetchStats, fetchChartProjects]);
 
  if (authLoading) {
   return <LoadingSpinner />;
  }
 
  const role = user?.role;
+ const chartStats = (() => {
+  const activeProjects = chartProjects;
+  const activeProjectIds = new Set(activeProjects.map((project) => project.id));
+
+  const effectiveScopes = chartScopes.length > 0
+   ? chartScopes
+   : activeProjects.flatMap((project) => project.scopes || []);
+
+  const projectProgressMap = new Map<number, boolean>();
+  const scopeProjectCounts = new Map<string, number>();
+  const scopeCompletion: number[] = [];
+
+  effectiveScopes.forEach((scope) => {
+   const rawProject = scope.project ?? (scope as { project_id?: number }).project_id;
+   const projectId =
+    typeof rawProject === 'number'
+     ? rawProject
+     : typeof rawProject === 'object' && rawProject !== null && 'id' in rawProject
+     ? Number((rawProject as { id?: number }).id)
+     : Number(rawProject);
+
+   if (!projectId || !activeProjectIds.has(projectId)) return;
+
+   const hasProgress = scopeHasProgress(scope);
+   if (hasProgress) {
+    projectProgressMap.set(projectId, true);
+   } else if (!projectProgressMap.has(projectId)) {
+    projectProgressMap.set(projectId, false);
+   }
+
+   const scopeName = getScopeName(scope);
+   scopeProjectCounts.set(scopeName, (scopeProjectCounts.get(scopeName) || 0) + 1);
+
+   const qty = Number(scope.qty_sq_ft ?? scope.quantity ?? 0);
+   const installed = Number(scope.installed ?? 0);
+   const pct = scope.percent_complete ?? (qty > 0 ? (installed / qty) * 100 : 0);
+   scopeCompletion.push(Number(pct));
+  });
+
+  const qualifiedActive = activeProjects.filter(
+   (project) => isStartedProject(project) && projectProgressMap.get(project.id)
+  );
+
+  const sortedScopes = [...scopeProjectCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const topScopes = sortedScopes.slice(0, 3);
+  const otherScopesCount = sortedScopes.slice(3).reduce((sum, [, count]) => sum + count, 0);
+
+  const scopesNearlyDone = scopeCompletion.filter((pct) => pct >= 90).length;
+  const scopesInProgress = scopeCompletion.filter((pct) => pct < 90).length;
+
+  return {
+   activeTotal: activeProjects.length,
+   activeQualified: qualifiedActive.length,
+   topScopes,
+   otherScopesCount,
+   scopesNearlyDone,
+   scopesInProgress,
+  };
+ })();
 
  return (
   <ProtectedRoute>
@@ -156,6 +384,77 @@ export default function DashboardPage() {
         </div>
        </div>
       )}
+
+      {/* Dashboard Charts */}
+      <div className="mb-6">
+       <Card>
+        <div className="space-y-4">
+         <div className="flex items-center justify-between">
+          <div>
+           <h3 className="text-lg font-semibold text-gray-900">Project Charts</h3>
+           <p className="text-sm text-gray-600">Active projects with scope progress</p>
+          </div>
+          {chartsLoading && <span className="text-sm text-gray-500">Updating...</span>}
+         </div>
+
+         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <PieChart
+           title="Active Projects Started & Scoped Progress"
+           data={[
+            {
+             label: 'Started + Scope Progress',
+             value: chartStats.activeQualified,
+             color: '#16a34a',
+            },
+            {
+             label: 'Other Active',
+             value: Math.max(0, chartStats.activeTotal - chartStats.activeQualified),
+             color: '#fdba74',
+            },
+           ]}
+          />
+
+          <PieChart
+           title="Scopes Near Completion"
+           data={[
+            {
+             label: '≥ 90% Complete',
+             value: chartStats.scopesNearlyDone,
+             color: '#22c55e',
+            },
+            {
+             label: '< 90% Complete',
+             value: chartStats.scopesInProgress,
+             color: '#f97316',
+            },
+           ]}
+          />
+         </div>
+
+         <div className="border-t pt-4">
+          <h4 className="text-sm font-semibold text-gray-900 mb-3">Scope Coverage (Projects per Scope)</h4>
+          {chartStats.topScopes.length === 0 ? (
+           <p className="text-sm text-gray-500">Scopes will appear once active projects include scope data.</p>
+          ) : (
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {chartStats.topScopes.map(([scopeName, count]) => (
+             <div key={scopeName} className="flex items-center justify-between text-sm">
+              <span className="text-gray-700">{scopeName}</span>
+              <span className="font-semibold text-gray-900">{count} projects</span>
+             </div>
+            ))}
+            {chartStats.otherScopesCount > 0 && (
+             <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Other scopes</span>
+              <span className="font-semibold text-gray-900">{chartStats.otherScopesCount} projects</span>
+             </div>
+            )}
+           </div>
+          )}
+         </div>
+        </div>
+       </Card>
+      </div>
 
       {/* Role-specific dashboard content */}
       {role === 'PROJECT_MANAGER' && (

@@ -189,6 +189,76 @@ function formatDate(value?: string) {
   return date.toLocaleDateString();
 }
 
+function isStartedProject(project: Project) {
+  if (!project.start_date) return false;
+  const start = new Date(project.start_date);
+  if (Number.isNaN(start.getTime())) return false;
+  return start <= new Date();
+}
+
+function scopeHasProgress(scope: ProjectScope) {
+  const pct = scope.percent_complete;
+  if (pct != null && Number(pct) > 1) return true;
+  const qty = Number(scope.qty_sq_ft || 0);
+  const installed = Number(scope.installed || 0);
+  if (qty <= 0) return false;
+  return (installed / qty) * 100 > 1;
+}
+
+function projectHasScopeProgress(project: Project) {
+  if (!Array.isArray(project.scopes) || project.scopes.length === 0) return false;
+  return project.scopes.some((scope) => scopeHasProgress(scope));
+}
+
+function getScopeName(scope: ProjectScope) {
+  if (typeof scope.scope_type === 'object') return scope.scope_type.name;
+  return scope.scope_type_detail?.name || 'Unknown';
+}
+
+function PieChart({
+  title,
+  data,
+}: {
+  title: string;
+  data: Array<{ label: string; value: number; color: string }>;
+}) {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  const segments = total > 0
+    ? data
+        .map((item) => `${item.color} ${(item.value / total) * 100}%`)
+        .join(', ')
+    : '#e5e7eb 100%';
+
+  return (
+    <div className="border rounded-lg p-4 bg-white">
+      <h4 className="text-sm font-semibold text-gray-900 mb-3">{title}</h4>
+      <div className="flex items-center gap-4">
+        <div
+          className="h-28 w-28 rounded-full"
+          style={{ background: `conic-gradient(${segments})` }}
+          aria-label={title}
+        />
+        <div className="space-y-2 text-sm">
+          {data.map((item) => (
+            <div key={item.label} className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="text-gray-700">{item.label}</span>
+              <span className="text-gray-900 font-semibold ml-auto">
+                {item.value}
+                {total > 0 && (
+                  <span className="text-gray-500 font-normal ml-1">
+                    ({((item.value / total) * 100).toFixed(1)}%)
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function buildAiSummary(project: Project) {
   const productionPercent = getProductionPercent(project);
   const totalQty = project.total_quantity ?? 0;
@@ -245,6 +315,7 @@ export default function HQPortalPage() {
   const [projectDetails, setProjectDetails] = useState<ProjectDetails | null>(null);
 
   const [currentPage, setCurrentPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<'details' | 'charts'>('details');
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PENDING'>('ALL');
@@ -462,6 +533,51 @@ export default function HQPortalPage() {
     return { total, active, completed, pending };
   }, [allProjects]);
 
+  const chartStats = useMemo(() => {
+    const activeProjects = allProjects.filter((p) => getUnifiedStatus(p) === 'ACTIVE');
+    const qualifiedActive = activeProjects.filter(
+      (p) => isStartedProject(p) && projectHasScopeProgress(p)
+    );
+
+    const scopeProjectCounts = new Map<string, number>();
+    const scopeCompletion: number[] = [];
+
+    allProjects.forEach((project) => {
+      if (!Array.isArray(project.scopes)) return;
+
+      const uniqueScopes = new Set<string>();
+      project.scopes.forEach((scope) => {
+        const scopeName = getScopeName(scope);
+        uniqueScopes.add(scopeName);
+
+        const pct =
+          scope.percent_complete ??
+          (scope.qty_sq_ft > 0 ? (Number(scope.installed || 0) / Number(scope.qty_sq_ft)) * 100 : 0);
+        scopeCompletion.push(Number(pct));
+      });
+
+      uniqueScopes.forEach((scopeName) => {
+        scopeProjectCounts.set(scopeName, (scopeProjectCounts.get(scopeName) || 0) + 1);
+      });
+    });
+
+    const sortedScopes = [...scopeProjectCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const topScopes = sortedScopes.slice(0, 3);
+    const otherScopesCount = sortedScopes.slice(3).reduce((sum, [, count]) => sum + count, 0);
+
+    const scopesNearlyDone = scopeCompletion.filter((pct) => pct >= 90).length;
+    const scopesInProgress = scopeCompletion.filter((pct) => pct < 90).length;
+
+    return {
+      activeTotal: activeProjects.length,
+      activeQualified: qualifiedActive.length,
+      topScopes,
+      otherScopesCount,
+      scopesNearlyDone,
+      scopesInProgress,
+    };
+  }, [allProjects]);
+
   if (!authenticated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center px-4">
@@ -614,9 +730,9 @@ export default function HQPortalPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
+      <div className="flex-1 flex flex-col lg:flex-row lg:overflow-hidden lg:h-[calc(100vh-200px)]">
         {/* Left Sidebar - Project List */}
-        <div className="w-full md:w-80 lg:w-96 border-r bg-white flex flex-col flex-shrink-0" style={{ height: 'calc(100vh - 200px)' }}>
+        <div className="w-full md:w-80 lg:w-96 border-r bg-white flex flex-col flex-shrink-0 lg:h-[calc(100vh-200px)]">
           <div className="flex-shrink-0">
             {/* Search */}
             <div className="p-4 border-b">
@@ -637,7 +753,7 @@ export default function HQPortalPage() {
           </div>
 
           {/* Project List - Scrollable */}
-          <div className="flex-1 overflow-y-auto" style={{ overflowY: 'auto', height: '0' }}>
+          <div className="flex-1 lg:overflow-y-auto lg:min-h-0">
             <div className="divide-y">
               {loading ? (
                 <div className="p-8">
@@ -785,8 +901,96 @@ export default function HQPortalPage() {
         </div>
 
         {/* Middle - Project Details */}
-        <div className="w-full lg:flex-[2] overflow-y-auto bg-gray-50 min-w-0" style={{ height: 'calc(100vh - 200px)' }}>
-          {selectedProject ? (
+        <div className="w-full lg:flex-[2] lg:overflow-y-auto bg-gray-50 min-w-0 lg:h-[calc(100vh-200px)]">
+          <div className="sticky top-0 z-10 bg-gray-50 border-b px-4 sm:px-6 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setActiveTab('details')}
+                className={`px-3 py-1 text-sm rounded ${
+                  activeTab === 'details'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Details
+              </button>
+              <button
+                onClick={() => setActiveTab('charts')}
+                className={`px-3 py-1 text-sm rounded ${
+                  activeTab === 'charts'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Charts
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'charts' ? (
+            <div className="p-6 space-y-6">
+              <Card>
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900">HQ Charts</h3>
+                  <p className="text-sm text-gray-600">
+                    Highlights based on all public projects across divisions.
+                  </p>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <PieChart
+                    title="Active Projects Started &amp; Scoped Progress"
+                    data={[
+                      {
+                        label: 'Started + Scope Progress',
+                        value: chartStats.activeQualified,
+                        color: '#16a34a',
+                      },
+                      {
+                        label: 'Other Active',
+                        value: Math.max(0, chartStats.activeTotal - chartStats.activeQualified),
+                        color: '#fdba74',
+                      },
+                    ]}
+                  />
+
+                  <PieChart
+                    title="Scopes Near Completion"
+                    data={[
+                      {
+                        label: '≥ 90% Complete',
+                        value: chartStats.scopesNearlyDone,
+                        color: '#22c55e',
+                      },
+                      {
+                        label: '< 90% Complete',
+                        value: chartStats.scopesInProgress,
+                        color: '#f97316',
+                      },
+                    ]}
+                  />
+                </div>
+
+                <div className="mt-6 border-t pt-6">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-3">Scope Coverage (Projects per Scope)</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {chartStats.topScopes.map(([scopeName, count]) => (
+                      <div key={scopeName} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">{scopeName}</span>
+                        <span className="font-semibold text-gray-900">{count} projects</span>
+                      </div>
+                    ))}
+                    {chartStats.otherScopesCount > 0 && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500">Other scopes</span>
+                        <span className="font-semibold text-gray-900">{chartStats.otherScopesCount} projects</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          ) : selectedProject ? (
             <div className="p-6">
               {loadingDetails ? (
                 <LoadingSpinner />
@@ -891,52 +1095,6 @@ export default function HQPortalPage() {
                       </div>
                     </div>
 
-                    {/* Schedule Status Bar */}
-                    {selectedProject.schedule_status && (
-                      <div className="border-t pt-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-gray-700">Project Status</span>
-                          <span
-                            className={`text-xs font-medium px-2 py-1 rounded ${
-                              selectedProject.schedule_status.status === 'GREEN'
-                                ? 'bg-green-100 text-green-800'
-                                : selectedProject.schedule_status.status === 'YELLOW'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : selectedProject.schedule_status.status === 'RED'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}
-                          >
-                            {selectedProject.schedule_status.status === 'GREEN'
-                              ? 'On Track'
-                              : selectedProject.schedule_status.status === 'YELLOW'
-                              ? 'At Risk'
-                              : selectedProject.schedule_status.status === 'RED'
-                              ? 'Behind Schedule'
-                              : 'Unknown'}
-                            {selectedProject.schedule_status.days_late && selectedProject.schedule_status.days_late > 0 && (
-                              <span className="ml-1">({selectedProject.schedule_status.days_late} days late)</span>
-                            )}
-                          </span>
-                        </div>
-
-                        <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                          <div
-                            className={`h-4 rounded-full transition-all ${
-                              selectedProject.schedule_status.status === 'GREEN'
-                                ? 'bg-green-500'
-                                : selectedProject.schedule_status.status === 'YELLOW'
-                                ? 'bg-yellow-500'
-                                : selectedProject.schedule_status.status === 'RED'
-                                ? 'bg-red-500'
-                                : 'bg-gray-400'
-                            }`}
-                            style={{ width: '100%' }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
                     {/* Progress Overview */}
                     {(getProductionPercent(selectedProject) != null ||
                       selectedProject.financial_percent_complete != null ||
@@ -962,7 +1120,7 @@ export default function HQPortalPage() {
 
                               <div className="w-full bg-gray-200 rounded-full h-4 relative overflow-hidden">
                                 <div
-                                  className="bg-blue-600 h-4 rounded-full transition-all"
+                                  className="bg-green-600 h-4 rounded-full transition-all"
                                   style={{ width: `${clampPercent(Number(getProductionPercent(selectedProject)))}%` }}
                                 />
                                 <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900">
@@ -1129,60 +1287,6 @@ export default function HQPortalPage() {
                           </div>
                         )}
 
-                        {/* Progress by Scope */}
-                        {selectedProject.scopes && selectedProject.scopes.length > 0 && (
-                          <div className="mt-6 border-t pt-4">
-                            <h4 className="text-md font-semibold text-gray-900 mb-4">Progress by Scope</h4>
-                            <div className="space-y-3">
-                              {selectedProject.scopes.map((scope) => {
-                                const scopeTypeName =
-                                  typeof scope.scope_type === 'object'
-                                    ? scope.scope_type.name
-                                    : scope.scope_type_detail?.name || 'Unknown';
-
-                                const percentComplete =
-                                  scope.percent_complete ??
-                                  (scope.qty_sq_ft > 0 ? (scope.installed / scope.qty_sq_ft) * 100 : 0);
-
-                                return (
-                                  <div key={scope.id} className="flex items-center gap-3">
-                                    <div className="w-24 text-sm text-gray-700 truncate" title={scopeTypeName}>
-                                      {scopeTypeName}
-                                    </div>
-                                    <div className="flex-1 bg-gray-200 rounded-full h-6 relative overflow-hidden">
-                                      <div
-                                        className={`h-6 rounded-full transition-all flex items-center justify-end pr-2 ${
-                                          percentComplete >= 100
-                                            ? 'bg-green-500'
-                                            : percentComplete >= 75
-                                            ? 'bg-blue-600'
-                                            : percentComplete >= 50
-                                            ? 'bg-yellow-500'
-                                            : 'bg-orange-500'
-                                        }`}
-                                        style={{ width: `${clampPercent(percentComplete)}%` }}
-                                      >
-                                        {percentComplete > 15 && (
-                                          <span className="text-xs font-medium text-white">
-                                            {Number(percentComplete).toFixed(0)}%
-                                          </span>
-                                        )}
-                                      </div>
-                                      {percentComplete <= 15 && (
-                                        <span className="absolute inset-0 flex items-center justify-start pl-2 text-xs font-medium text-gray-700">
-                                          {Number(percentComplete).toFixed(0)}%
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="w-20 text-xs text-gray-600 text-right">
-                                      {Number(scope.installed).toLocaleString()} / {Number(scope.qty_sq_ft).toLocaleString()}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
 
@@ -1210,7 +1314,7 @@ export default function HQPortalPage() {
         </div>
 
         {/* Right - AI Summary */}
-        <div className="w-full lg:w-80 xl:w-96 bg-white border-t lg:border-t-0 lg:border-l border-gray-200 overflow-y-auto" style={{ height: 'calc(100vh - 200px)' }}>
+        <div className="w-full lg:w-80 xl:w-96 bg-white border-t lg:border-t-0 lg:border-l border-gray-200 lg:overflow-y-auto lg:h-[calc(100vh-200px)]">
           <div className="p-6">
             <Card>
               <div className="space-y-3">

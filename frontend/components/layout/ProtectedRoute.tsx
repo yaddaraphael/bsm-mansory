@@ -8,9 +8,10 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   allowedRoles?: string[];
+  showSpinner?: boolean;
 }
 
-export default function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
+export default function ProtectedRoute({ children, allowedRoles, showSpinner = true }: ProtectedRouteProps) {
   const { isAuthenticated, user, loading } = useAuth();
   const router = useRouter();
   const [checked, setChecked] = useState(false);
@@ -29,7 +30,7 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
   }, [isAuthenticated, loading, user, allowedRoles, router]);
 
   if (loading || !checked) {
-    return <LoadingSpinner />;
+    return showSpinner ? <LoadingSpinner /> : null;
   }
 
   if (!isAuthenticated) {
@@ -55,4 +56,3 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
 
   return <>{children}</>;
 }
-

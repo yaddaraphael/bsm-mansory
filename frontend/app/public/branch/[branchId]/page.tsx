@@ -102,6 +102,76 @@ function formatDate(value?: string) {
   return date.toLocaleDateString();
 }
 
+function isStartedProject(project: Project) {
+  if (!project.start_date) return false;
+  const start = new Date(project.start_date);
+  if (Number.isNaN(start.getTime())) return false;
+  return start <= new Date();
+}
+
+function scopeHasProgress(scope: ProjectScope) {
+  const pct = scope.percent_complete;
+  if (pct != null && Number(pct) > 1) return true;
+  const qty = Number(scope.qty_sq_ft || 0);
+  const installed = Number(scope.installed || 0);
+  if (qty <= 0) return false;
+  return (installed / qty) * 100 > 1;
+}
+
+function projectHasScopeProgress(project: Project) {
+  if (!Array.isArray(project.scopes) || project.scopes.length === 0) return false;
+  return project.scopes.some((scope) => scopeHasProgress(scope));
+}
+
+function getScopeName(scope: ProjectScope) {
+  if (typeof scope.scope_type === 'object') return scope.scope_type.name;
+  return scope.scope_type_detail?.name || 'Unknown';
+}
+
+function PieChart({
+  title,
+  data,
+}: {
+  title: string;
+  data: Array<{ label: string; value: number; color: string }>;
+}) {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  const segments = total > 0
+    ? data
+        .map((item) => `${item.color} ${(item.value / total) * 100}%`)
+        .join(', ')
+    : '#e5e7eb 100%';
+
+  return (
+    <div className="border rounded-lg p-4 bg-white">
+      <h4 className="text-sm font-semibold text-gray-900 mb-3">{title}</h4>
+      <div className="flex items-center gap-4">
+        <div
+          className="h-28 w-28 rounded-full"
+          style={{ background: `conic-gradient(${segments})` }}
+          aria-label={title}
+        />
+        <div className="space-y-2 text-sm">
+          {data.map((item) => (
+            <div key={item.label} className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="text-gray-700">{item.label}</span>
+              <span className="text-gray-900 font-semibold ml-auto">
+                {item.value}
+                {total > 0 && (
+                  <span className="text-gray-500 font-normal ml-1">
+                    ({((item.value / total) * 100).toFixed(1)}%)
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function buildAiSummary(project: Project) {
   const productionPercent = getProductionPercent(project);
   const totalQty = project.total_quantity ?? 0;
@@ -182,6 +252,7 @@ export default function BranchPortalPage() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [branchName, setBranchName] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'details' | 'charts'>('details');
   
   // Filter states
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'COMPLETED' | 'PENDING'>('ALL');
@@ -313,6 +384,51 @@ export default function BranchPortalPage() {
       active: allProjects.filter(p => p.spectrum_status_code === 'A' || p.status === 'ACTIVE').length,
       completed: allProjects.filter(p => p.spectrum_status_code === 'C' || p.status === 'COMPLETED').length,
       pending: allProjects.filter(p => p.spectrum_status_code === 'I' || p.status === 'PENDING').length,
+    };
+  }, [allProjects]);
+
+  const chartStats = useMemo(() => {
+    const activeProjects = allProjects.filter((p) => p.spectrum_status_code === 'A' || p.status === 'ACTIVE');
+    const qualifiedActive = activeProjects.filter(
+      (p) => isStartedProject(p) && projectHasScopeProgress(p)
+    );
+
+    const scopeProjectCounts = new Map<string, number>();
+    const scopeCompletion: number[] = [];
+
+    allProjects.forEach((project) => {
+      if (!Array.isArray(project.scopes)) return;
+
+      const uniqueScopes = new Set<string>();
+      project.scopes.forEach((scope) => {
+        const scopeName = getScopeName(scope);
+        uniqueScopes.add(scopeName);
+
+        const pct =
+          scope.percent_complete ??
+          (scope.qty_sq_ft > 0 ? (Number(scope.installed || 0) / Number(scope.qty_sq_ft)) * 100 : 0);
+        scopeCompletion.push(Number(pct));
+      });
+
+      uniqueScopes.forEach((scopeName) => {
+        scopeProjectCounts.set(scopeName, (scopeProjectCounts.get(scopeName) || 0) + 1);
+      });
+    });
+
+    const sortedScopes = [...scopeProjectCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const topScopes = sortedScopes.slice(0, 3);
+    const otherScopesCount = sortedScopes.slice(3).reduce((sum, [, count]) => sum + count, 0);
+
+    const scopesNearlyDone = scopeCompletion.filter((pct) => pct >= 90).length;
+    const scopesInProgress = scopeCompletion.filter((pct) => pct < 90).length;
+
+    return {
+      activeTotal: activeProjects.length,
+      activeQualified: qualifiedActive.length,
+      topScopes,
+      otherScopesCount,
+      scopesNearlyDone,
+      scopesInProgress,
     };
   }, [allProjects]);
 
@@ -525,7 +641,95 @@ export default function BranchPortalPage() {
 
         {/* Middle - Project Details */}
         <div className="w-full lg:flex-[2] overflow-y-auto bg-gray-50 min-w-0 lg:h-[calc(100vh-200px)]">
-          {selectedProject ? (
+          <div className="sticky top-0 z-10 bg-gray-50 border-b px-4 sm:px-6 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setActiveTab('details')}
+                className={`px-3 py-1 text-sm rounded ${
+                  activeTab === 'details'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Details
+              </button>
+              <button
+                onClick={() => setActiveTab('charts')}
+                className={`px-3 py-1 text-sm rounded ${
+                  activeTab === 'charts'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                Charts
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'charts' ? (
+            <div className="p-6 space-y-6">
+              <Card>
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Branch Charts</h3>
+                  <p className="text-sm text-gray-600">
+                    Highlights based on public projects in this division.
+                  </p>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  <PieChart
+                    title="Active Projects Started &amp; Scoped Progress"
+                    data={[
+                      {
+                        label: 'Started + Scope Progress',
+                        value: chartStats.activeQualified,
+                        color: '#16a34a',
+                      },
+                      {
+                        label: 'Other Active',
+                        value: Math.max(0, chartStats.activeTotal - chartStats.activeQualified),
+                        color: '#fdba74',
+                      },
+                    ]}
+                  />
+
+                  <PieChart
+                    title="Scopes Near Completion"
+                    data={[
+                      {
+                        label: '≥ 90% Complete',
+                        value: chartStats.scopesNearlyDone,
+                        color: '#22c55e',
+                      },
+                      {
+                        label: '< 90% Complete',
+                        value: chartStats.scopesInProgress,
+                        color: '#f97316',
+                      },
+                    ]}
+                  />
+                </div>
+
+                <div className="mt-6 border-t pt-6">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-3">Scope Coverage (Projects per Scope)</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {chartStats.topScopes.map(([scopeName, count]) => (
+                      <div key={scopeName} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">{scopeName}</span>
+                        <span className="font-semibold text-gray-900">{count} projects</span>
+                      </div>
+                    ))}
+                    {chartStats.otherScopesCount > 0 && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500">Other scopes</span>
+                        <span className="font-semibold text-gray-900">{chartStats.otherScopesCount} projects</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          ) : selectedProject ? (
             <div className="p-6">
               {loadingDetails ? (
                 <LoadingSpinner />

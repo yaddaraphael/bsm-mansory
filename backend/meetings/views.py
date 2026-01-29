@@ -274,7 +274,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
             .annotate(in_spectrum=Exists(spectrum_exists))
             .filter(in_spectrum=True)
             .select_related("branch", "project_manager", "foreman")
-            .prefetch_related("scopes")
             .distinct()
         )
 
@@ -287,8 +286,14 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 user_branch = Branch.objects.filter(manager=user).first()
                 projects = projects.filter(branch=user_branch) if user_branch else projects.none()
 
-        from projects.serializers import ProjectSerializer
-        return Response(ProjectSerializer(projects, many=True).data)
+        include_scopes = request.query_params.get("include_scopes") == "1"
+        if include_scopes:
+            projects = projects.prefetch_related("scopes")
+            from projects.serializers import ProjectSerializer
+            return Response(ProjectSerializer(projects, many=True).data)
+
+        from projects.serializers import ProjectListSerializer
+        return Response(ProjectListSerializer(projects, many=True).data)
 
     # ---------------------------------------------------------
     # /meetings/meetings/project_phases/?project_id=123
@@ -347,23 +352,41 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
         # ---- meeting maps (previous + current) ----
         prev_installed_map: dict[tuple[int, str], Decimal] = {}
-        curr_installed_map: dict[tuple[int, str], Decimal] = {}
+        prev_meeting_installed_map: dict[tuple[int, str], Decimal] = {}
 
-        def build_installed_map(meeting: Meeting | None) -> dict[tuple[int, str], Decimal]:
-            if not meeting:
-                return {}
-            installed_map: dict[tuple[int, str], Decimal] = {}
-            jobs = (
-                MeetingJob.objects.filter(meeting=meeting, project__job_number__in=job_numbers)
-                .prefetch_related("phases")
+        def build_installed_map(*, meeting: Meeting | None = None, before_meeting: Meeting | None = None) -> dict[tuple[int, str], Decimal]:
+            latest_map: dict[tuple[int, str], tuple[date, datetime, Decimal]] = {}
+            phases_qs = (
+                MeetingJobPhase.objects.filter(
+                    meeting_job__project__job_number__in=job_numbers,
+                    meeting_job__meeting__status="COMPLETED",
+                )
+                .select_related("meeting_job__project", "meeting_job__meeting")
             )
-            for mj in jobs:
-                for ph in mj.phases.all():
-                    key = (mj.project_id, _normalize_scope_key(ph.phase_code or ""))
-                    if not key[1]:
-                        continue
-                    installed_map[key] = _to_decimal(ph.installed_quantity)
-            return installed_map
+            if meeting is not None:
+                phases_qs = phases_qs.filter(meeting_job__meeting=meeting)
+            if before_meeting is not None:
+                phases_qs = phases_qs.filter(
+                    Q(meeting_job__meeting__meeting_date__lt=before_meeting.meeting_date)
+                    | Q(
+                        meeting_job__meeting__meeting_date=before_meeting.meeting_date,
+                        meeting_job__meeting__id__lt=before_meeting.id,
+                    )
+                )
+
+            for ph in phases_qs:
+                key = (ph.meeting_job.project_id, _normalize_scope_key(ph.phase_code or ""))
+                if not key[1]:
+                    continue
+                meeting_date = ph.meeting_job.meeting.meeting_date or date.min
+                updated_at = ph.updated_at or datetime.min
+                qty = _to_decimal(ph.installed_quantity)
+
+                current = latest_map.get(key)
+                if not current or (meeting_date, updated_at) > (current[0], current[1]):
+                    latest_map[key] = (meeting_date, updated_at, qty)
+
+            return {k: v[2] for k, v in latest_map.items()}
 
         if meeting_id:
             current_meeting = get_object_or_404(Meeting, id=meeting_id)
@@ -375,8 +398,8 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 .order_by("-meeting_date")
                 .first()
             )
-            prev_installed_map = build_installed_map(previous_meeting)
-            curr_installed_map = build_installed_map(current_meeting)
+            prev_installed_map = build_installed_map(before_meeting=current_meeting)
+            prev_meeting_installed_map = build_installed_map(meeting=previous_meeting)
 
         # ---- Spectrum dates ----
         dates_qs = SpectrumJobDates.objects.filter(job_number__in=job_numbers)
@@ -461,16 +484,16 @@ class MeetingViewSet(viewsets.ModelViewSet):
                         scope_name = scope_type_obj.get("name") or scope_type_detail.get("name") or ""
                         norm_code, norm_name = scope_maps_for(project.id, scope_code, scope_name)
 
-                        prev_installed = lookup_installed(prev_installed_map, project.id, norm_code, norm_name)
-                        curr_installed = lookup_installed(curr_installed_map, project.id, norm_code, norm_name)
+                        prev_installed = lookup_installed(prev_meeting_installed_map, project.id, norm_code, norm_name)
+                        installed_before = lookup_installed(prev_installed_map, project.id, norm_code, norm_name)
 
                         scope_qty = _to_decimal(scope.get("quantity", scope.get("qty_sq_ft", 0)))
-                        scope_installed = _to_decimal(scope.get("installed", 0))
-                        cumulative_before = scope_installed - curr_installed
-                        previous_balance = max(Decimal("0"), scope_qty - cumulative_before)
+                        previous_balance = max(Decimal("0"), scope_qty - installed_before)
 
-                        scope["previous_meeting_installed"] = prev_installed
+                        # Use cumulative installed before this meeting as the baseline for UI math
+                        scope["previous_meeting_installed"] = installed_before
                         scope["previous_balance"] = previous_balance
+                        scope["last_meeting_installed"] = prev_installed
 
                 details["scopes"] = scopes
 
@@ -522,10 +545,10 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     }
 
                     if mj is None:
-                        mj = MeetingJob.objects.create(
+                        mj, _ = MeetingJob.objects.update_or_create(
                             meeting=meeting,
                             project_id=project_id,
-                            **defaults,
+                            defaults=defaults,
                         )
                         existing_jobs[project_id] = mj
                     else:
@@ -631,12 +654,13 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     notified_pms.add(project.project_manager_id)
 
                 # Branch manager
-                if project.branch and project.branch.manager:
-                    bm_id = project.branch.manager_id
+                branch_manager = getattr(project.branch, "manager", None) if project.branch else None
+                bm_id = getattr(project.branch, "manager_id", None) if project.branch else None
+                if branch_manager and bm_id:
                     if bm_id not in notified_bms:
                         branch_jobs_count = meeting_jobs.filter(project__branch=project.branch).count()
                         Notification.objects.create(
-                            user=project.branch.manager,
+                            user=branch_manager,
                             type="REPORT_SUBMITTED",
                             title=f"Meeting Report Available - {meeting.meeting_date}",
                             message=(

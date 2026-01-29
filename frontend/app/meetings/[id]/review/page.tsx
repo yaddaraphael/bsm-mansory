@@ -373,14 +373,20 @@ export default function MeetingReviewPage() {
       const existingJobs = existingJobsRes.data || [];
 
       setLoadingMessage('Loading active jobs…');
-      const activeJobsRes = await api.get<ActiveJob[]>('/meetings/meetings/active_jobs/', {
+      const activeJobsRes = await api.get<ActiveJob[]>('/meetings/meetings/active_jobs/?include_scopes=0', {
         signal: controller.signal as unknown as AbortSignal,
       });
       const activeJobs = activeJobsRes.data || [];
 
       // batch job details (IMPORTANT: trailing slash to avoid APPEND_SLASH POST crash)
       let batchDetails: Record<string, JobDetails> = {};
-      const jobNumbers = activeJobs.map((j) => j.job_number).filter(Boolean);
+      const existingProjectIds = new Set<number>(
+        existingJobs.map((ej) => ej.project_id ?? ej.project?.id).filter((x): x is number => typeof x === 'number'),
+      );
+      const jobNumbers = activeJobs
+        .filter((j) => existingProjectIds.has(j.id))
+        .map((j) => j.job_number)
+        .filter(Boolean);
 
       if (jobNumbers.length > 0) {
         setLoadingMessage('Loading job dates…');
@@ -421,9 +427,6 @@ export default function MeetingReviewPage() {
       batchScopeMapRef.current = batchScopeLookup;
 
       // Load scopes ONLY for projects that have existing meeting entries (fast initial load)
-      const existingProjectIds = new Set<number>(
-        existingJobs.map((ej) => ej.project_id ?? ej.project?.id).filter((x): x is number => typeof x === 'number'),
-      );
 
       const projectScopesMap: Record<number, ProjectScope[]> = {};
       if (existingProjectIds.size > 0) {
@@ -725,7 +728,37 @@ export default function MeetingReviewPage() {
           const scopes = (pr.data?.scopes || []) as ProjectScope[];
           const filteredScopes = scopes.filter((s) => scopeBelongsToProject(s, projectId));
           const jobNumber = job.project?.job_number || '';
-          const lookup = batchScopeMapRef.current[jobNumber] || {};
+
+          let lookup = batchScopeMapRef.current[jobNumber] || {};
+          if (!Object.keys(lookup).length && jobNumber) {
+            try {
+              const detailsRes = await api.post<Record<string, JobDetails>>(
+                '/meetings/meetings/batch_job_details/',
+                { job_numbers: [jobNumber], meeting_id: parseInt(meetingId, 10) },
+              );
+              const details = detailsRes.data?.[jobNumber];
+              if (details?.scopes?.length) {
+                const map: Record<string, { previous_meeting_installed?: number; previous_balance?: number }> = {};
+                for (const sc of details.scopes) {
+                  const code = scopeTypeCodeOf(sc, scopeTypes);
+                  const name = scopeTypeNameOf(sc, scopeTypes);
+                  const key1 = normalizeScopeKey(code);
+                  const key2 = normalizeScopeKey(name);
+                  const entry = {
+                    previous_meeting_installed: sc.previous_meeting_installed,
+                    previous_balance: sc.previous_balance,
+                  };
+                  if (key1) map[key1] = entry;
+                  if (key2) map[key2] = entry;
+                }
+                lookup = map;
+                batchScopeMapRef.current = { ...batchScopeMapRef.current, [jobNumber]: map };
+              }
+            } catch (e) {
+              console.error(`batch_job_details failed for ${jobNumber}:`, e);
+            }
+          }
+
           const mergedScopes = filteredScopes.map((s) => {
             const code = scopeTypeCodeOf(s, scopeTypes);
             const name = scopeTypeNameOf(s, scopeTypes);
@@ -749,7 +782,7 @@ export default function MeetingReviewPage() {
         }
       }
     },
-    [allMeetingJobs, scopeTypes],
+    [allMeetingJobs, scopeTypes, meetingId],
   );
 
   // ---------------- Save (draft + complete) ----------------
@@ -926,15 +959,10 @@ export default function MeetingReviewPage() {
           };
 
           const backendPrevBalance = scope.previous_balance;
-          const scopeInstalled = Math.min(totalQty, safeNumber(scope.installed, baselineInstalled));
-          const currentMeetingInstalled = Math.max(0, installedTotal - baselineInstalled);
-          const cumulativeBeforeThisMeeting = scopeInstalled - currentMeetingInstalled;
           const prevBalance =
             backendPrevBalance !== undefined
               ? round2(safeNumber(backendPrevBalance, 0))
-              : round2(
-                  Math.max(0, totalQty - (phase ? cumulativeBeforeThisMeeting : scopeInstalled)),
-                );
+              : round2(Math.max(0, totalQty - baselineInstalled));
           const parsedDraft = parseDelta(draft);
           const deltaForBalance = parsedDraft === null ? computedDelta : Math.max(0, parsedDraft);
           const currBalance = round2(Math.max(0, prevBalance - deltaForBalance));
@@ -1121,20 +1149,12 @@ export default function MeetingReviewPage() {
   // ---------------- UI ----------------
   if (loading) {
     return (
-      <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']}>
+      <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']} showSpinner={false}>
         <div className="min-h-screen bg-gray-50">
           <div className="lg:pl-64">
             <main className="pt-16 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-center h-[calc(100vh-8rem)]">
-                <Card className="p-6 w-full max-w-md">
-                  <div className="flex items-center gap-3">
-                    <LoadingSpinner />
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900">Loading…</div>
-                      <div className="text-xs text-gray-500">{loadingMessage || 'Please wait'}</div>
-                    </div>
-                  </div>
-                </Card>
+                <LoadingSpinner text={loadingMessage || 'Please wait'} />
               </div>
             </main>
           </div>
@@ -1144,7 +1164,7 @@ export default function MeetingReviewPage() {
   }
 
   return (
-    <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']}>
+    <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']} showSpinner={false}>
       <div className="min-h-screen bg-gray-50">
         <div className="lg:pl-64">
           <main className="pt-16 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8">

@@ -261,15 +261,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         continue;
       }
 
-      const sorted = [...matching].sort((a, b) => {
-        const aDate = a.meeting_date || a.updated_at || '';
-        const bDate = b.meeting_date || b.updated_at || '';
-        return new Date(aDate).getTime() - new Date(bDate).getTime();
-      });
+      const latest = [...matching].reduce((acc, cur) => {
+        if (!acc) return cur;
+        const aMeeting = acc.meeting_date ? new Date(acc.meeting_date).getTime() : 0;
+        const bMeeting = cur.meeting_date ? new Date(cur.meeting_date).getTime() : 0;
+        if (bMeeting !== aMeeting) {
+          return bMeeting > aMeeting ? cur : acc;
+        }
+        const aUpdated = acc.updated_at ? new Date(acc.updated_at).getTime() : 0;
+        const bUpdated = cur.updated_at ? new Date(cur.updated_at).getTime() : 0;
+        return bUpdated > aUpdated ? cur : acc;
+      }, undefined as MeetingPhase | undefined);
 
-      const installedValues = sorted.map((p) => Number(p.installed_quantity || 0));
-      const installedTotal = installedValues.length
-        ? installedValues.reduce((a, b) => a + b, 0)
+      const installedTotal = latest
+        ? Number(latest.installed_quantity || 0)
         : Number(scope.installed || 0);
 
       map[scope.id] = installedTotal;

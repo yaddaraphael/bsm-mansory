@@ -50,3 +50,7 @@
 - The backend restricts results to the user�s branch (or assigned branches).
 - The UI shows only branch-visible projects and relevant metrics.
 
+## Charts Note
+
+Confirmed: If your `/projects/projects/` endpoint doesn’t support `include_scopes=1`, the charts still render but scope breakdowns will show zero until scope data is available.
+

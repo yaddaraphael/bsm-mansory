@@ -47,6 +47,8 @@ interface Project {
 
  spectrum_project_manager_name?: string;
  production_percent_complete?: number;
+ total_installed?: number;
+ total_quantity?: number;
  projected_complete_date?: string;
  actual_complete_date?: string;
 }
@@ -481,9 +483,17 @@ export default function ProjectsPage() {
                <div className="md:col-span-1">
                 <p className="text-xs text-gray-500 mb-0.5">Progress</p>
                 <p className="text-xs font-medium text-gray-900">
-                 {typeof project.production_percent_complete === 'number'
-                  ? `${project.production_percent_complete.toFixed(1)}%`
-                  : '0%'}
+                 {(() => {
+                  if (typeof project.production_percent_complete === 'number') {
+                   return `${project.production_percent_complete.toFixed(1)}%`;
+                  }
+                  const totalQty = Number(project.total_quantity || 0);
+                  const totalInstalled = Number(project.total_installed || 0);
+                  if (totalQty > 0) {
+                   return `${((totalInstalled / totalQty) * 100).toFixed(1)}%`;
+                  }
+                  return '0%';
+                 })()}
                 </p>
                </div>
 

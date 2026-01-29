@@ -2,6 +2,7 @@
 Signals to sync meeting phase updates to project scopes.
 Meetings are the authoritative source for installed quantities, masons, tenders, and operators.
 """
+from django.db import models
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from .models import MeetingJobPhase, MeetingJob
@@ -59,36 +60,37 @@ def sync_meeting_phase_to_project_scope(meeting_job_phase):
                 except ProjectScope.DoesNotExist:
                     continue
     
-    # Update the matching scope with the latest data from the most recent meeting
+    # Update the matching scope with cumulative installed + latest resources
     if matching_scope:
-        # Get the most recent phase data for this scope from all meetings
-        latest_phase = MeetingJobPhase.objects.filter(
+        completed_phases = MeetingJobPhase.objects.filter(
             meeting_job__project=project,
-            phase_code=meeting_job_phase.phase_code
-        ).order_by('-meeting_job__meeting__meeting_date', '-updated_at').first()
-        
+            phase_code=meeting_job_phase.phase_code,
+            meeting_job__meeting__status="COMPLETED",
+        )
+
+        latest_phase = completed_phases.order_by("-meeting_job__meeting__meeting_date", "-updated_at").first()
+
         if latest_phase:
-            # Update the project scope with the latest data from meetings
-            # Meetings are authoritative for: installed, masons, tenders, operators
+            # Meetings are authoritative for: installed (cumulative), masons, tenders, operators
             old_installed = matching_scope.installed
             old_masons = matching_scope.masons
             old_tenders = matching_scope.tenders
             old_operators = matching_scope.operators
-            
+
             matching_scope.installed = Decimal(str(latest_phase.installed_quantity))
             matching_scope.masons = latest_phase.masons or 0
             matching_scope.tenders = latest_phase.labors or 0  # labors in MeetingJobPhase = tenders in ProjectScope
             matching_scope.operators = latest_phase.operators or 0
-            
-            matching_scope.save(update_fields=['installed', 'masons', 'tenders', 'operators', 'updated_at'])
-            
+
+            matching_scope.save(update_fields=["installed", "masons", "tenders", "operators", "updated_at"])
+
             logger.info(
                 f"Synced meeting phase {latest_phase.phase_code} to project scope {scope_type_obj.name if scope_type_obj else 'N/A'}: "
-                f"installed: {old_installed} → {matching_scope.installed}, "
-                f"masons: {old_masons} → {matching_scope.masons}, "
-                f"tenders: {old_tenders} → {matching_scope.tenders}, "
-                f"operators: {old_operators} → {matching_scope.operators} "
-                f"(from meeting {latest_phase.meeting_job.meeting.meeting_date})"
+                f"installed: {old_installed} -> {matching_scope.installed}, "
+                f"masons: {old_masons} -> {matching_scope.masons}, "
+                f"tenders: {old_tenders} -> {matching_scope.tenders}, "
+                f"operators: {old_operators} -> {matching_scope.operators} "
+                f"(latest meeting {latest_phase.meeting_job.meeting.meeting_date})"
             )
     else:
         # Log when we can't find a matching scope (for debugging)
