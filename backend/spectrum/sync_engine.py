@@ -48,6 +48,24 @@ def _coerce_text(value: Optional[str]) -> Optional[str]:
     return text if text else None
 
 
+def _normalize_status_code(status_code: Optional[str]) -> tuple[Optional[str], list[Optional[str]]]:
+    """
+    Normalize status_code for Spectrum calls.
+    Returns (status_code_for_division_calls, status_codes_for_phase_calls).
+    - None or "ALL" => all statuses (A/I/C)
+    - "" => active + inactive only (A/I)
+    - "A"/"I"/"C" => specific status
+    """
+    if status_code is None:
+        return None, DEFAULT_STATUS_CODES
+    text = str(status_code).strip().upper()
+    if text == "ALL":
+        return None, DEFAULT_STATUS_CODES
+    if text == "":
+        return "", ["A", "I"]
+    return text, [text]
+
+
 @dataclass(frozen=True)
 class SyncConfig:
     company_code: Optional[str]
@@ -197,7 +215,8 @@ class SpectrumSyncEngine:
 
         sync_time = timezone.now()
 
-        jobs = self.client.get_all_jobs_by_division(company_code=company_code, divisions=divisions, status_code=status_code or "")
+        status_code_param, _ = _normalize_status_code(status_code)
+        jobs = self.client.get_all_jobs_by_division(company_code=company_code, divisions=divisions, status_code=status_code_param)
         self._maybe_store_raw(run, "GetJob", {"company_code": company_code, "divisions": divisions, "status_code": status_code}, jobs)
 
         mains = self.client.get_all_job_main_by_division(company_code=company_code, divisions=divisions)
@@ -432,7 +451,12 @@ class SpectrumSyncEngine:
         status_code = self.config.status_code
         sync_time = timezone.now()
 
-        rows = self.client.get_all_job_dates_by_division(company_code=company_code, divisions=divisions, status_code=status_code or "")
+        status_code_param, _ = _normalize_status_code(status_code)
+        rows = self.client.get_all_job_dates_by_division(
+            company_code=company_code,
+            divisions=divisions,
+            status_code=status_code_param,
+        )
         self._maybe_store_raw(run, "GetJobDates", {"company_code": company_code, "divisions": divisions, "status_code": status_code}, rows)
 
         objs: List[SpectrumJobDates] = []
@@ -500,7 +524,12 @@ class SpectrumSyncEngine:
         status_code = self.config.status_code
         sync_time = timezone.now()
 
-        rows = self.client.get_all_job_udf_by_division(company_code=company_code, divisions=divisions, status_code=status_code or "")
+        status_code_param, _ = _normalize_status_code(status_code)
+        rows = self.client.get_all_job_udf_by_division(
+            company_code=company_code,
+            divisions=divisions,
+            status_code=status_code_param,
+        )
         self._maybe_store_raw(run, "GetJobUDF", {"company_code": company_code, "divisions": divisions, "status_code": status_code}, rows)
 
         objs: List[SpectrumJobUDF] = []
@@ -532,12 +561,7 @@ class SpectrumSyncEngine:
         sync_time = timezone.now()
 
         # PhaseEnhanced can be huge, so fetch status codes in parallel
-        if status_code is None:
-            status_codes = [None]
-        elif status_code == "":
-            status_codes = ["A", "I"]
-        else:
-            status_codes = [status_code]
+        _, status_codes = _normalize_status_code(status_code)
 
         def fetch(sc):
             rows = self.client.get_phase_enhanced(company_code=company_code, status_code=sc)
@@ -727,7 +751,7 @@ def run_spectrum_sync(
     *,
     company_code: Optional[str] = None,
     divisions: Optional[List[str]] = None,
-    status_code: Optional[str] = "",
+    status_code: Optional[str] = None,
     run_type: str = SpectrumSyncRun.RUN_AUTO,
 ) -> Dict[str, Any]:
     """

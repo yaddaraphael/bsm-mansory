@@ -1084,7 +1084,7 @@ def manual_sync_jobs(request):
     Body (optional):
       - company_code: string
       - division: string OR divisions: list[string]
-      - status_code: "A"|"I"|"C"|""  ("" = Active + Inactive)
+      - status_code: "A"|"I"|"C"|""|"ALL"  ("" = Active + Inactive, "ALL"/missing = Active + Inactive + Complete)
     """
     try:
         company_code = request.data.get("company_code") or None
@@ -1098,10 +1098,9 @@ def manual_sync_jobs(request):
         else:
             divisions_list = None
 
-        status_code = request.data.get("status_code", "")
-        # DRF may give None; normalize
-        if status_code is None:
-            status_code = ""
+        status_code = request.data.get("status_code")
+        if not status_code or str(status_code).strip().upper() == "ALL":
+            status_code = None
 
         async_flag = _coerce_bool(request.data.get("async"), default=True)
         if async_flag:

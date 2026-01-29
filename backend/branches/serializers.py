@@ -7,6 +7,7 @@ class BranchSerializer(serializers.ModelSerializer):
     total_projects = serializers.SerializerMethodField()
     active_projects = serializers.SerializerMethodField()
     inactive_projects = serializers.SerializerMethodField()
+    completed_projects = serializers.SerializerMethodField()
     
     class Meta:
         model = Branch
@@ -52,6 +53,19 @@ class BranchSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+    def get_completed_projects(self, obj):
+        """Get completed project count from Project model for this branch."""
+        try:
+            from projects.models import Project
+            from spectrum.models import SpectrumJob
+            from django.db.models import Count
+            # Only count Projects that have a corresponding SpectrumJob (imported from Spectrum)
+            # This ensures the count matches the dashboard's "Imported Jobs (Spectrum)" count
+            valid_job_numbers = SpectrumJob.objects.values_list('job_number', flat=True).distinct()
+            return Project.objects.filter(branch=obj, status='COMPLETED').exclude(job_number__isnull=True).exclude(job_number='').filter(job_number__in=valid_job_numbers).aggregate(count=Count('job_number', distinct=True))['count'] or 0
+        except Exception:
+            return 0
+
 
 class BranchContactSerializer(serializers.ModelSerializer):
     get_role_display = serializers.CharField(source='get_role_display', read_only=True)
@@ -60,4 +74,3 @@ class BranchContactSerializer(serializers.ModelSerializer):
         model = BranchContact
         fields = '__all__'
         read_only_fields = ['created_at', 'updated_at']
-

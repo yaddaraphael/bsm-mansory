@@ -1,8 +1,6 @@
 'use client';
 
 import { use, useState, useEffect } from 'react';
-import Sidebar from '@/components/layout/Sidebar';
-import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
 import Card from '@/components/ui/Card';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -11,7 +9,6 @@ import Button from '@/components/ui/Button';
 import { useProject, type ProjectScope } from '@/hooks/useProjects';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { useSidebar } from '@/components/layout/SidebarContext';
 import api from '@/lib/api';
 import { PencilIcon, TrashIcon, CheckIcon, XMarkIcon, PlusIcon } from '@heroicons/react/24/outline';
 import Input from '@/components/ui/Input';
@@ -186,7 +183,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
   const { user } = useAuth();
-  const { isCollapsed } = useSidebar();
   const { project, loading, error: projectError, refetch: refetchProject } = useProject(id);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [comprehensiveData, setComprehensiveData] = useState<ComprehensiveProjectData | null>(null);
@@ -300,34 +296,13 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     fetchScopeTypesAndForemen();
   }, []);
 
-  // Handle responsive sidebar margin
-  const [sidebarMargin, setSidebarMargin] = useState('0');
-  useEffect(() => {
-    const updateMargin = () => {
-      if (window.innerWidth >= 1024) {
-        setSidebarMargin(isCollapsed ? '80px' : '256px');
-      } else {
-        setSidebarMargin('0');
-      }
-    };
-    
-    updateMargin();
-    window.addEventListener('resize', updateMargin);
-    return () => window.removeEventListener('resize', updateMargin);
-  }, [isCollapsed]);
 
   if (loading) {
     return (
       <ProtectedRoute>
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 flex flex-col">
-            <Header />
-            <main className="flex-1 p-6 bg-gray-50">
+        <main className="flex-1 p-6 bg-gray-50">
               <LoadingSpinner />
             </main>
-          </div>
-        </div>
       </ProtectedRoute>
     );
   }
@@ -335,11 +310,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   if (!loading && !project) {
     return (
       <ProtectedRoute>
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 flex flex-col">
-            <Header />
-            <main className="flex-1 p-6 bg-gray-50">
+        <main className="flex-1 p-6 bg-gray-50">
               <Card>
                 <div className="text-center py-8">
                   <p className="text-gray-500 mb-4">Project not found</p>
@@ -353,8 +324,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               </Card>
             </main>
-          </div>
-        </div>
       </ProtectedRoute>
     );
   }
@@ -546,14 +515,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <ProtectedRoute>
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div 
-            className="flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out"
-            style={{ marginLeft: sidebarMargin }}
-          >
-            <Header />
-            <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
+        <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <div className="max-w-7xl mx-auto w-full px-2 sm:px-4">
                 {/* Header Section */}
                 <div className="mb-4 md:mb-6 w-full">
@@ -1650,8 +1612,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               </div>
             </div>
           </main>
-        </div>
-      </div>
     </ProtectedRoute>
   );
 }

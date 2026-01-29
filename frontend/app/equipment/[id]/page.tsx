@@ -1,8 +1,6 @@
 'use client';
 
 import { use, useState, useEffect, useCallback } from 'react';
-import Sidebar from '@/components/layout/Sidebar';
-import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
 import Card from '@/components/ui/Card';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -106,17 +104,11 @@ export default function EquipmentDetailPage({ params }: { params: Promise<{ id: 
   if (loading) {
     return (
       <ProtectedRoute>
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
-            <Header />
-            <main className="flex-1 p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
+        <main className="flex-1 p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <div className="max-w-7xl mx-auto">
                 <LoadingSpinner />
               </div>
             </main>
-          </div>
-        </div>
       </ProtectedRoute>
     );
   }
@@ -124,11 +116,7 @@ export default function EquipmentDetailPage({ params }: { params: Promise<{ id: 
   if (!equipment) {
     return (
       <ProtectedRoute>
-        <div className="flex min-h-screen">
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
-            <Header />
-            <main className="flex-1 p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
+        <main className="flex-1 p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
               <div className="max-w-7xl mx-auto">
                 <Card>
                   <div className="text-center py-8">
@@ -140,19 +128,13 @@ export default function EquipmentDetailPage({ params }: { params: Promise<{ id: 
                 </Card>
               </div>
             </main>
-          </div>
-        </div>
       </ProtectedRoute>
     );
   }
 
   return (
     <ProtectedRoute>
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
-          <Header />
-          <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
+      <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-y-auto pt-16 md:pt-20">
             <div className="max-w-7xl mx-auto">
               {/* Header Section */}
               <div className="mb-6">
@@ -348,8 +330,6 @@ export default function EquipmentDetailPage({ params }: { params: Promise<{ id: 
               </div>
             </div>
           </main>
-        </div>
-      </div>
     </ProtectedRoute>
   );
 }

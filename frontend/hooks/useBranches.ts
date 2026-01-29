@@ -15,6 +15,7 @@ export interface Branch {
   total_projects?: number;
   active_projects?: number;
   inactive_projects?: number;
+  completed_projects?: number;
   spectrum_division_code?: string;
 }
 

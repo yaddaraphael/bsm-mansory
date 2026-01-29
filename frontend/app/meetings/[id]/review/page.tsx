@@ -2,8 +2,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Sidebar from '@/components/layout/Sidebar';
-import Header from '@/components/layout/Header';
 import ProtectedRoute from '@/components/layout/ProtectedRoute';
 import Card from '@/components/ui/Card';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -1125,9 +1123,7 @@ export default function MeetingReviewPage() {
     return (
       <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']}>
         <div className="min-h-screen bg-gray-50">
-          <Sidebar />
           <div className="lg:pl-64">
-            <Header />
             <main className="pt-16 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-center h-[calc(100vh-8rem)]">
                 <Card className="p-6 w-full max-w-md">
@@ -1150,9 +1146,7 @@ export default function MeetingReviewPage() {
   return (
     <ProtectedRoute allowedRoles={['ROOT_SUPERADMIN', 'SUPERADMIN', 'ADMIN']}>
       <div className="min-h-screen bg-gray-50">
-        <Sidebar />
         <div className="lg:pl-64">
-          <Header />
           <main className="pt-16 md:pt-20 pb-8 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto flex flex-col h-[calc(100vh-4rem)] md:h-[calc(100vh-5rem)] pb-12">
               {/* Fixed Header */}

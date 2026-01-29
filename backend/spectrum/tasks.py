@@ -16,7 +16,7 @@ def sync_spectrum_jobs_task():
     """
     try:
         logger.info("Starting automatic Spectrum sync...")
-        run_spectrum_sync(run_type=SpectrumSyncRun.RUN_AUTO)
+        run_spectrum_sync(status_code="", run_type=SpectrumSyncRun.RUN_AUTO)
         logger.info("Automatic Spectrum sync completed successfully")
     except Exception as e:
         logger.error(f"Error in automatic Spectrum sync: {e}", exc_info=True)
@@ -24,7 +24,7 @@ def sync_spectrum_jobs_task():
 
 
 @shared_task
-def sync_spectrum_jobs_manual_task(company_code=None, divisions=None, status_code=""):
+def sync_spectrum_jobs_manual_task(company_code=None, divisions=None, status_code=None):
     """
     Manual/adhoc Spectrum sync with optional filters.
     """
@@ -33,7 +33,7 @@ def sync_spectrum_jobs_manual_task(company_code=None, divisions=None, status_cod
         stats = run_spectrum_sync(
             company_code=company_code,
             divisions=divisions,
-            status_code=status_code or "",
+            status_code=status_code,
             run_type=SpectrumSyncRun.RUN_MANUAL,
         )
         logger.info("Manual Spectrum sync completed successfully")

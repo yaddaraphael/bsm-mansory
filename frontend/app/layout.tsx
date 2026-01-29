@@ -1,7 +1,8 @@
-import type { Metadata } from 'next'
+﻿import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { SidebarProvider } from '@/components/layout/SidebarContext'
+import AppShell from '@/components/layout/AppShell'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,10 +20,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <SidebarProvider>
-          {children}
+          <AppShell>{children}</AppShell>
         </SidebarProvider>
       </body>
     </html>
   )
 }
+
 
