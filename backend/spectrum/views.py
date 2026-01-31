@@ -18,7 +18,8 @@ from .models import (
 )
 from .serializers import SpectrumJobSerializer
 from .services import SpectrumSOAPClient
-from .sync_engine import run_spectrum_sync
+from .utils import filter_divisions, normalize_statuses, ALLOWED_PHASE_COST_TYPES
+from .sync_engine import run_spectrum_sync, run_spectrum_phase_sync
 from .tasks import sync_spectrum_jobs_manual_task
 from .models import SpectrumSyncRun
 from accounts.permissions import IsRootSuperadmin
@@ -123,6 +124,35 @@ def _coerce_bool(value, default=False):
     return default
 
 
+def _normalize_status_code(status_code):
+    statuses = normalize_statuses(status_code=status_code)
+    if not statuses:
+        return ""
+    if len(statuses) == 1:
+        return statuses[0]
+    return ""  # blank means A + I in Spectrum
+
+
+def _filter_single_division(division):
+    if division is None:
+        return None
+    filtered = filter_divisions([division])
+    return filtered[0] if filtered else None
+
+
+def _filter_divisions_list(divisions):
+    if divisions is None:
+        return None
+    return filter_divisions(divisions)
+
+
+def _normalize_cost_type(cost_type):
+    if not cost_type:
+        return None
+    ct = str(cost_type).strip().upper()
+    return ct if ct in ALLOWED_PHASE_COST_TYPES else None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsRootSuperadmin])
 def get_jobs_from_spectrum(request):
@@ -148,8 +178,6 @@ def get_jobs_from_spectrum(request):
         division = request.query_params.get('division', None)
         status_code = request.query_params.get('status_code', None)
         project_manager = request.query_params.get('project_manager', None)
-        superintendent = request.query_params.get('superintendent', None)
-        estimator = request.query_params.get('estimator', None)
         customer_code = request.query_params.get('customer_code', None)
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
@@ -158,23 +186,23 @@ def get_jobs_from_spectrum(request):
         logger.info(f"=== SPECTRUM FETCH REQUEST ===")
         logger.info(f"Company Code: {company_code}")
         logger.info(f"Division: {division}, Status: {status_code}, Sort By: {sort_by}")
-        logger.info(f"Project Manager: {project_manager}, Superintendent: {superintendent}")
+        logger.info(f"Project Manager: {project_manager}")
         
-        # Allow explicit "ALL" to mean A + I + C
-        if not status_code or status_code == 'ALL':
-            status_code = None
+        status_code = _normalize_status_code(status_code)
+        filtered_division = _filter_single_division(division)
+        if division and not filtered_division:
+            logger.info("Requested division excluded from Spectrum fetch: %s", division)
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
 
         # Fetch jobs from Spectrum
         # If no division is specified, fetch all jobs by looping through all divisions
-        if division:
+        if filtered_division:
             # If a specific division is requested, loop statuses if none was specified
             jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                divisions=[division],
+                divisions=[filtered_division],
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -187,8 +215,6 @@ def get_jobs_from_spectrum(request):
                 divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -258,15 +284,19 @@ def import_jobs_to_database(request):
             divisions = request.data.get("divisions")
             division = request.data.get("division")
             if divisions and isinstance(divisions, list):
-                divisions_list = [str(d).strip() for d in divisions if str(d).strip()]
+                divisions_list = _filter_divisions_list([str(d).strip() for d in divisions if str(d).strip()])
             elif division:
-                divisions_list = [str(division).strip()]
+                filtered_division = _filter_single_division(division)
+                divisions_list = [filtered_division] if filtered_division else []
             else:
                 divisions_list = None
 
-            status_code = request.data.get("status_code", "")
-            if status_code is None:
-                status_code = ""
+            status_code = _normalize_status_code(request.data.get("status_code", ""))
+            if divisions_list == []:
+                return Response(
+                    {"detail": "No allowed divisions requested for Spectrum import."},
+                    status=http_status.HTTP_200_OK,
+                )
 
             try:
                 task = sync_spectrum_jobs_manual_task.delay(
@@ -293,38 +323,36 @@ def import_jobs_to_database(request):
         division = request.data.get('division', None)
         status_code = request.data.get('status_code', None)
         project_manager = request.data.get('project_manager', None)
-        superintendent = request.data.get('superintendent', None)
-        estimator = request.data.get('estimator', None)
         customer_code = request.data.get('customer_code', None)
         cost_center = request.data.get('cost_center', None)
         sort_by = request.data.get('sort_by', None)
 
-        # Allow explicit "ALL" to mean A + I + C
-        if not status_code or status_code == 'ALL':
-            status_code = None
+        status_code = _normalize_status_code(status_code)
+        filtered_division = _filter_single_division(division)
+        if division and not filtered_division:
+            return Response(
+                {'detail': 'No allowed divisions requested for Spectrum import.', 'imported': 0, 'updated': 0},
+                status=http_status.HTTP_200_OK,
+            )
         
         # Fetch jobs from Spectrum GetJob service using division looping to get all jobs
         # If no division is specified, fetch all jobs by looping through all divisions
-        if division:
+        if filtered_division:
             # If a specific division is requested, loop statuses if none was specified
             jobs = client.get_all_jobs_by_division(
                 company_code=company_code,
-                divisions=[division],
+                divisions=[filtered_division],
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
             )
             jobs_main = client.get_all_job_main_by_division(
                 company_code=company_code,
-                divisions=[division],
+                divisions=[filtered_division],
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -337,8 +365,6 @@ def import_jobs_to_database(request):
                 divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -348,8 +374,6 @@ def import_jobs_to_database(request):
                 divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -369,10 +393,10 @@ def import_jobs_to_database(request):
         phases_dict = {}
         try:
             # Fetch job dates using same filters as jobs
-            if division:
+            if filtered_division:
                 job_dates_list = client.get_all_job_dates_by_division(
                     company_code=company_code,
-                    divisions=[division],
+                    divisions=[filtered_division],
                     status_code=status_code,
                 )
             else:
@@ -413,24 +437,34 @@ def import_jobs_to_database(request):
             logger.info(f"Fetching phases for {len(valid_job_numbers)} valid job numbers using parallel requests...")
             
             # Helper function to fetch phases for a single job
+            cost_types = sorted(ALLOWED_PHASE_COST_TYPES)
+
             def fetch_job_phases(job_num):
                 """Fetch phases for a single job number."""
                 try:
-                    job_phases = client.get_phase_enhanced(
-                        company_code=company_code,
-                        job_number=job_num,
-                        status_code=status_code,
-                    )
+                    job_phases = []
+                    for ct in cost_types:
+                        job_phases.extend(
+                            client.get_phase_enhanced(
+                                company_code=company_code,
+                                job_number=job_num,
+                                status_code=status_code,
+                                cost_type=ct,
+                            )
+                        )
                     # Strictly filter to only include phases that match the requested job number
                     filtered_phases = []
                     for phase_data in job_phases:
                         phase_job_num = safe_strip(phase_data.get('Job_Number'))
+                        phase_cost_type = _normalize_cost_type(phase_data.get('Cost_Type'))
                         # Triple validation: must be valid pattern, must match requested job, and must have company
                         if (phase_job_num and 
                             is_valid_job_number(phase_job_num) and 
-                            phase_job_num == job_num):
+                            phase_job_num == job_num and
+                            phase_cost_type):
                             company = safe_strip(phase_data.get('Company_Code'))
                             if company:
+                                phase_data['Cost_Type'] = phase_cost_type
                                 filtered_phases.append((company, phase_job_num, phase_data))
                             else:
                                 logger.debug(f"Skipping phase {phase_data.get('Phase_Code')} for job {job_num} - missing Company_Code")
@@ -474,38 +508,15 @@ def import_jobs_to_database(request):
             
             logger.info(f"Completed fetching phases: {fetched_count} succeeded, {failed_count} failed out of {len(valid_job_numbers)} total jobs")
             
-            # Fetch ALL UDFs in bulk (this is the key optimization - fetch once, not per job!)
-            logger.info("Fetching all job UDFs in bulk...")
+            # UDFs are no longer used; skip fetching them entirely.
             udfs_dict = {}
-            try:
-                if division:
-                    udfs_list = client.get_job_udf(
-                        company_code=company_code,
-                        division=division,
-                        status_code=status_code,
-                    )
-                else:
-                    # Fetch all UDFs by looping through divisions
-                    udfs_list = client.get_all_job_udf_by_division(
-                        company_code=company_code,
-                        divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
-                        status_code=status_code,
-                    )
-                
-                # Create dictionary keyed by (company_code, job_number) for fast lookup
-                for udf_data in udfs_list:
-                    company = safe_strip(udf_data.get('Company_Code'))
-                    job_num = safe_strip(udf_data.get('Job_Number'))
-                    if company and job_num:
-                        udfs_dict[(company, job_num)] = udf_data
-                
-                logger.info(f"Fetched {len(udfs_dict)} UDFs in bulk")
-            except Exception as e:
-                logger.warning(f"Error fetching UDFs in bulk: {e}")
-            
-            logger.info(f"Fetched {len(job_dates_dict)} job dates, {sum(len(v) for v in phases_dict.values())} phases, and {len(udfs_dict)} UDFs")
+            logger.info(
+                "Fetched %s job dates and %s phases (UDFs disabled)",
+                len(job_dates_dict),
+                sum(len(v) for v in phases_dict.values()),
+            )
         except Exception as e:
-            logger.warning(f"Error fetching job dates/phases/UDFs in bulk: {e}")
+            logger.warning(f"Error fetching job dates/phases in bulk: {e}")
         
         # Import jobs to database
         imported_count = 0
@@ -576,8 +587,6 @@ def import_jobs_to_database(request):
                         'state': safe_strip(job_data.get('State')),
                         'zip_code': safe_strip(job_data.get('Zip_Code')),
                         'project_manager': safe_strip(job_data.get('Project_Manager')),
-                        'superintendent': safe_strip(job_data.get('Superintendent')),
-                        'estimator': safe_strip(job_data.get('Estimator')),
                         'certified_flag': safe_strip(job_data.get('Certified_Flag')),
                         'customer_code': safe_strip(job_data.get('Customer_Code')),
                         'status_code': safe_strip(job_data.get('Status_Code')),
@@ -969,45 +978,7 @@ def import_jobs_to_database(request):
                             logger.warning(f"Error importing phases for {job_number}: {e}")
                         
                         # Import job UDFs (from pre-fetched bulk data - no API call needed!)
-                        try:
-                            udf_data = udfs_dict.get((company, job_number))
-                            
-                            if udf_data:
-                                udf_defaults = {
-                                    'udf1': safe_strip(udf_data.get('UDF1')),
-                                    'udf2': safe_strip(udf_data.get('UDF2')),
-                                    'udf3': safe_strip(udf_data.get('UDF3')),
-                                    'udf4': safe_strip(udf_data.get('UDF4')),
-                                    'udf5': safe_strip(udf_data.get('UDF5')),
-                                    'udf6': safe_strip(udf_data.get('UDF6')),
-                                    'udf7': safe_strip(udf_data.get('UDF7')),
-                                    'udf8': safe_strip(udf_data.get('UDF8')),
-                                    'udf9': safe_strip(udf_data.get('UDF9')),
-                                    'udf10': safe_strip(udf_data.get('UDF10')),
-                                    'udf11': safe_strip(udf_data.get('UDF11')),
-                                    'udf12': safe_strip(udf_data.get('UDF12')),
-                                    'udf13': safe_strip(udf_data.get('UDF13')),
-                                    'udf14': safe_strip(udf_data.get('UDF14')),
-                                    'udf15': safe_strip(udf_data.get('UDF15')),
-                                    'udf16': safe_strip(udf_data.get('UDF16')),
-                                    'udf17': safe_strip(udf_data.get('UDF17')),
-                                    'udf18': safe_strip(udf_data.get('UDF18')),
-                                    'udf19': safe_strip(udf_data.get('UDF19')),
-                                    'udf20': safe_strip(udf_data.get('UDF20')),
-                                    'error_code': safe_strip(udf_data.get('Error_Code')),
-                                    'error_description': safe_strip(udf_data.get('Error_Description')),
-                                    'error_column': safe_strip(udf_data.get('Error_Column')),
-                                    'last_synced_at': sync_time,
-                                }
-                                
-                                SpectrumJobUDF.objects.update_or_create(
-                                    company_code=company,
-                                    job_number=job_number,
-                                    defaults=udf_defaults
-                                )
-                                logger.debug(f"Imported job UDFs for {job_number}")
-                        except Exception as e:
-                            logger.warning(f"Error importing job UDFs for {job_number}: {e}")
+                        # Job UDFs are no longer imported.
                         
                 except Exception as e:
                     error_msg = f"Error importing job {job_data.get('Job_Number', 'unknown')}: {str(e)}"
@@ -1080,63 +1051,84 @@ def list_imported_jobs(request):
 @permission_classes([IsAuthenticated, IsRootSuperadmin])
 def manual_sync_jobs(request):
     """
-    Manually trigger a full Spectrum sync (fast bulk upsert).
-    Body (optional):
-      - company_code: string
-      - division: string OR divisions: list[string]
-      - status_code: "A"|"I"|"C"|""|"ALL"  ("" = Active + Inactive, "ALL"/missing = Active + Inactive + Complete)
+    Manually trigger a Spectrum sync.
+      Body (optional):
+        - company_code: string
+        - division: string OR divisions: list[string]
+        - status_code: "A"|"I"|""|"ALL"  (""/"ALL"/missing = Active + Inactive)
+        - job_number: string (optional, phase-only sync)
+        - cost_type: "S" or "L" (optional, phase-only sync)
     """
     try:
-        company_code = request.data.get("company_code") or None
+          company_code = request.data.get("company_code") or None
+          job_number = request.data.get("job_number") or None
+          cost_type = request.data.get("cost_type") or None
 
-        divisions = request.data.get("divisions")
-        division = request.data.get("division")
-        if divisions and isinstance(divisions, list):
-            divisions_list = [str(d).strip() for d in divisions if str(d).strip()]
-        elif division:
-            divisions_list = [str(division).strip()]
-        else:
-            divisions_list = None
+          divisions = request.data.get("divisions")
+          division = request.data.get("division")
+          if divisions and isinstance(divisions, list):
+              divisions_list = _filter_divisions_list([str(d).strip() for d in divisions if str(d).strip()])
+          elif division:
+              filtered_division = _filter_single_division(division)
+              divisions_list = [filtered_division] if filtered_division else []
+          else:
+              divisions_list = None
 
-        status_code = request.data.get("status_code")
-        if not status_code or str(status_code).strip().upper() == "ALL":
-            status_code = None
+          status_code = _normalize_status_code(request.data.get("status_code"))
+          if divisions_list == [] and not job_number:
+              return Response(
+                  {"detail": "No allowed divisions requested for Spectrum sync."},
+                  status=http_status.HTTP_200_OK,
+              )
 
-        async_flag = _coerce_bool(request.data.get("async"), default=True)
-        if async_flag:
-            try:
-                task = sync_spectrum_jobs_manual_task.delay(
-                    company_code=company_code,
-                    divisions=divisions_list,
-                    status_code=status_code,
-                )
-                return Response(
-                    {
-                        "detail": "Spectrum sync queued.",
-                        "queued": True,
-                        "task_id": task.id,
-                        "company_code": company_code,
-                        "divisions": divisions_list,
-                        "status_code": status_code,
-                    },
-                    status=http_status.HTTP_200_OK,
-                )
-            except Exception:
-                logger.error("Failed to enqueue Spectrum sync task", exc_info=True)
+          async_flag = _coerce_bool(request.data.get("async"), default=True)
+          if async_flag:
+              try:
+                  task = sync_spectrum_jobs_manual_task.delay(
+                      company_code=company_code,
+                      divisions=divisions_list,
+                      status_code=status_code,
+                      job_number=job_number,
+                      cost_type=cost_type,
+                  )
+                  return Response(
+                      {
+                          "detail": "Spectrum sync queued.",
+                          "queued": True,
+                          "task_id": task.id,
+                          "company_code": company_code,
+                          "divisions": divisions_list,
+                          "status_code": status_code,
+                          "job_number": job_number,
+                          "cost_type": cost_type,
+                      },
+                      status=http_status.HTTP_200_OK,
+                  )
+              except Exception:
+                  logger.error("Failed to enqueue Spectrum sync task", exc_info=True)
 
-        stats = run_spectrum_sync(
-            company_code=company_code,
-            divisions=divisions_list,
-            status_code=status_code,
-            run_type=SpectrumSyncRun.RUN_MANUAL,
-        )
-        return Response(
-            {
-                "detail": "Spectrum sync completed.",
-                "stats": stats,
-            },
-            status=http_status.HTTP_200_OK,
-        )
+          if job_number or cost_type:
+              stats = run_spectrum_phase_sync(
+                  company_code=company_code,
+                  job_number=job_number,
+                  cost_type=cost_type,
+                  status_code=status_code,
+                  run_type=SpectrumSyncRun.RUN_MANUAL,
+              )
+          else:
+              stats = run_spectrum_sync(
+                  company_code=company_code,
+                  divisions=divisions_list,
+                  status_code=status_code,
+                  run_type=SpectrumSyncRun.RUN_MANUAL,
+              )
+          return Response(
+              {
+                  "detail": "Spectrum sync completed.",
+                  "stats": stats,
+              },
+              status=http_status.HTTP_200_OK,
+          )
     except Exception as e:
         logger.error(f"Manual Spectrum sync failed: {e}", exc_info=True)
         return Response(
@@ -1173,26 +1165,24 @@ def get_job_main_from_spectrum(request):
         division = request.query_params.get('division', None)
         status_code = request.query_params.get('status_code', None)
         project_manager = request.query_params.get('project_manager', None)
-        superintendent = request.query_params.get('superintendent', None)
-        estimator = request.query_params.get('estimator', None)
         customer_code = request.query_params.get('customer_code', None)
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
-        if not status_code or status_code == 'ALL':
-            status_code = None
+        status_code = _normalize_status_code(status_code)
+        filtered_division = _filter_single_division(division)
+        if division and not filtered_division:
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
 
         # Fetch jobs from Spectrum GetJobMain service using division looping to get all jobs
         # If no division is specified, fetch all jobs by looping through all divisions
-        if division:
+        if filtered_division:
             # If a specific division is requested, loop statuses if none was specified
             jobs = client.get_all_job_main_by_division(
                 company_code=company_code,
-                divisions=[division],
+                divisions=[filtered_division],
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -1205,8 +1195,6 @@ def get_job_main_from_spectrum(request):
                 divisions=None,  # Use defaults from settings
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center,
                 sort_by=sort_by
@@ -1253,42 +1241,18 @@ def get_job_contacts_from_spectrum(request):
         # Get query parameters
         company_code = request.query_params.get('company_code', None)
         job_number = request.query_params.get('job_number', None)
-        status_code = request.query_params.get('status_code', None)
-        project_manager = request.query_params.get('project_manager', None)
-        superintendent = request.query_params.get('superintendent', None)
-        estimator = request.query_params.get('estimator', None)
-        first_name = request.query_params.get('first_name', None)
-        last_name = request.query_params.get('last_name', None)
-        phone_number = request.query_params.get('phone_number', None)
-        title = request.query_params.get('title', None)
-        cost_center = request.query_params.get('cost_center', None)
-        sort_by = request.query_params.get('sort_by', None)
-        
-        # Enforce at least one filter to avoid empty results
-        # Either job_number OR at least one search field must be provided
-        if not any([job_number, last_name, project_manager, first_name, phone_number]):
+        if not job_number:
             return Response(
                 {
-                    'detail': 'Provide at least one filter: job_number OR last_name OR project_manager OR first_name OR phone_number',
+                    'detail': 'Job Number is required for GetJobContact.',
                     'error': 'Missing required filter'
                 },
                 status=http_status.HTTP_400_BAD_REQUEST
             )
-        
-        # Fetch contacts from Spectrum
+
         contacts = client.get_job_contacts(
             company_code=company_code,
             job_number=job_number,
-            status_code=status_code,
-            project_manager=project_manager,
-            superintendent=superintendent,
-            estimator=estimator,
-            first_name=first_name,
-            last_name=last_name,
-            phone_number=phone_number,
-            title=title,
-            cost_center=cost_center,
-            sort_by=sort_by
         )
         
         return Response({
@@ -1331,21 +1295,21 @@ def get_job_dates_from_spectrum(request):
         division = request.query_params.get('division', None)
         status_code = request.query_params.get('status_code', None)
         project_manager = request.query_params.get('project_manager', None)
-        superintendent = request.query_params.get('superintendent', None)
-        estimator = request.query_params.get('estimator', None)
         customer_code = request.query_params.get('customer_code', None)
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
-        if not status_code or status_code == 'ALL':
-            status_code = None
+        status_code = _normalize_status_code(status_code)
+        filtered_division = _filter_single_division(division)
+        if division and not filtered_division:
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
 
         # Fetch job dates from Spectrum using looping to get all dates
-        if division:
+        if filtered_division:
             # If a specific division is requested, loop statuses if none was specified
             dates = client.get_all_job_dates_by_division(
                 company_code=company_code,
-                divisions=[division],
+                divisions=[filtered_division],
                 status_code=status_code,
             )
         else:
@@ -1413,12 +1377,17 @@ def get_phase_from_spectrum(request):
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
+        status_code = _normalize_status_code(status_code)
+        normalized_cost_type = _normalize_cost_type(cost_type)
+        if cost_type and not normalized_cost_type:
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
+        
         # Fetch phases from Spectrum using looping to get all phases
         if job_number:
             # If a specific job number is requested, fetch only that job
             phases = client.get_phase(
                 company_code=company_code,
-                cost_type=cost_type,
+                cost_type=normalized_cost_type,
                 job_number=job_number,
                 status_code=status_code,
                 cost_center=cost_center,
@@ -1437,6 +1406,10 @@ def get_phase_from_spectrum(request):
         # Add division information to phases by looking up from SpectrumJob
         phases_with_division = []
         for phase_item in phases:
+            phase_cost_type = _normalize_cost_type(phase_item.get('Cost_Type'))
+            if not phase_cost_type:
+                continue
+            phase_item['Cost_Type'] = phase_cost_type
             company = safe_strip(phase_item.get('Company_Code'))
             job_num = safe_strip(phase_item.get('Job_Number'))
             if company and job_num:
@@ -1490,17 +1463,36 @@ def get_phase_enhanced_from_spectrum(request):
         cost_center = request.query_params.get('cost_center', None)
         sort_by = request.query_params.get('sort_by', None)
         
+        status_code = _normalize_status_code(status_code)
+        normalized_cost_type = _normalize_cost_type(cost_type)
+        if cost_type and not normalized_cost_type:
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
+
         # Fetch enhanced phases from Spectrum using looping to get all phases
         if job_number:
             # If a specific job number is requested, fetch only that job
-            phases = client.get_phase_enhanced(
-                company_code=company_code,
-                cost_type=cost_type,
-                job_number=job_number,
-                status_code=status_code,
-                cost_center=cost_center,
-                sort_by=sort_by
-            )
+            phases = []
+            if normalized_cost_type:
+                phases = client.get_phase_enhanced(
+                    company_code=company_code,
+                    cost_type=normalized_cost_type,
+                    job_number=job_number,
+                    status_code=status_code,
+                    cost_center=cost_center,
+                    sort_by=sort_by
+                )
+            else:
+                for ct in sorted(ALLOWED_PHASE_COST_TYPES):
+                    phases.extend(
+                        client.get_phase_enhanced(
+                            company_code=company_code,
+                            cost_type=ct,
+                            job_number=job_number,
+                            status_code=status_code,
+                            cost_center=cost_center,
+                            sort_by=sort_by
+                        )
+                    )
         else:
             # No job number specified - fetch all phases by looping through status codes
             logger.info("No job number specified, fetching all enhanced phases by looping through status codes...")
@@ -1514,6 +1506,10 @@ def get_phase_enhanced_from_spectrum(request):
         # Add division information to enhanced phases by looking up from SpectrumJob
         phases_with_division = []
         for phase_item in phases:
+            phase_cost_type = _normalize_cost_type(phase_item.get('Cost_Type'))
+            if not phase_cost_type:
+                continue
+            phase_item['Cost_Type'] = phase_cost_type
             company = safe_strip(phase_item.get('Company_Code'))
             job_num = safe_strip(phase_item.get('Job_Number'))
             if company and job_num:
@@ -1765,21 +1761,22 @@ def get_job_udf_from_spectrum(request):
         division = request.query_params.get('division', None)
         status_code = request.query_params.get('status_code', None)
         project_manager = request.query_params.get('project_manager', None)
-        superintendent = request.query_params.get('superintendent', None)
-        estimator = request.query_params.get('estimator', None)
         customer_code = request.query_params.get('customer_code', None)
         cost_center = request.query_params.get('cost_center', None)
         
+        status_code = _normalize_status_code(status_code)
+        filtered_division = _filter_single_division(division)
+        if division and not filtered_division:
+            return Response({'results': [], 'count': 0}, status=http_status.HTTP_200_OK)
+
         # Fetch UDFs from Spectrum using looping to get all UDFs
-        if division:
+        if filtered_division:
             # If a specific division is requested, fetch only that division
             udfs = client.get_job_udf(
                 company_code=company_code,
-                division=division,
+                division=filtered_division,
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center
             )
@@ -1791,8 +1788,6 @@ def get_job_udf_from_spectrum(request):
                 divisions=None,  # Will use default: ['111', '121', '131', '135', '145']
                 status_code=status_code,
                 project_manager=project_manager,
-                superintendent=superintendent,
-                estimator=estimator,
                 customer_code=customer_code,
                 cost_center=cost_center
             )
@@ -1965,9 +1960,9 @@ def import_phases_to_database(request):
                     company = safe_strip(phase_data.get('Company_Code'))
                     job_number = safe_strip(phase_data.get('Job_Number'))
                     phase_code = safe_strip(phase_data.get('Phase_Code'))
-                    cost_type = safe_strip(phase_data.get('Cost_Type'))
+                    cost_type = _normalize_cost_type(phase_data.get('Cost_Type'))
                     
-                    if not company or not job_number or not phase_code:
+                    if not company or not job_number or not phase_code or not cost_type:
                         continue
                     
                     # Common fields for both regular and enhanced phases
@@ -2173,7 +2168,8 @@ def get_project_comprehensive_details(request, job_number: str):
         
         phases = SpectrumPhaseEnhanced.objects.filter(
             company_code=spectrum_job.company_code,
-            job_number=job_number
+            job_number=job_number,
+            cost_type__in=["S", "L", "s", "l"],
         ).order_by('phase_code', 'cost_type')
         
         udf = SpectrumJobUDF.objects.filter(
@@ -2209,6 +2205,9 @@ def get_project_comprehensive_details(request, job_number: str):
         except Project.DoesNotExist:
             project_data = None
         
+        def to_float(value):
+            return float(value) if value is not None else None
+
         # Serialize data
         result = {
             'job': {
@@ -2222,8 +2221,6 @@ def get_project_comprehensive_details(request, job_number: str):
                 'state': spectrum_job.state,
                 'zip_code': spectrum_job.zip_code,
                 'project_manager': spectrum_job.project_manager,
-                'superintendent': spectrum_job.superintendent,
-                'estimator': spectrum_job.estimator,
                 'customer_code': spectrum_job.customer_code,
                 'customer_name': spectrum_job.customer_name,
                 'status_code': spectrum_job.status_code,
@@ -2245,23 +2242,30 @@ def get_project_comprehensive_details(request, job_number: str):
                 'complete_date': job_dates.complete_date.isoformat() if job_dates and job_dates.complete_date else None,
             } if job_dates else None,
             'phases': [{
+                'company_code': p.company_code,
+                'job_number': p.job_number,
                 'phase_code': p.phase_code,
-                'cost_type': p.cost_type,
+                'cost_type': (p.cost_type or "").upper(),
                 'description': p.description,
                 'status_code': p.status_code,
-                'jtd_quantity': float(p.jtd_quantity) if p.jtd_quantity else None,
-                'jtd_hours': float(p.jtd_hours) if p.jtd_hours else None,
-                'jtd_actual_dollars': float(p.jtd_actual_dollars) if p.jtd_actual_dollars else None,
-                'projected_quantity': float(p.projected_quantity) if p.projected_quantity else None,
-                'projected_hours': float(p.projected_hours) if p.projected_hours else None,
-                'projected_dollars': float(p.projected_dollars) if p.projected_dollars else None,
-                'estimated_quantity': float(p.estimated_quantity) if p.estimated_quantity else None,
-                'estimated_hours': float(p.estimated_hours) if p.estimated_hours else None,
-                'current_estimated_dollars': float(p.current_estimated_dollars) if p.current_estimated_dollars else None,
+                'unit_of_measure': p.unit_of_measure,
+                'jtd_quantity': to_float(p.jtd_quantity),
+                'jtd_hours': to_float(p.jtd_hours),
+                'jtd_actual_dollars': to_float(p.jtd_actual_dollars),
+                'projected_quantity': to_float(p.projected_quantity),
+                'projected_hours': to_float(p.projected_hours),
+                'projected_dollars': to_float(p.projected_dollars),
+                'estimated_quantity': to_float(p.estimated_quantity),
+                'estimated_hours': to_float(p.estimated_hours),
+                'current_estimated_dollars': to_float(p.current_estimated_dollars),
+                'cost_center': p.cost_center,
                 'start_date': p.start_date.isoformat() if p.start_date else None,
                 'end_date': p.end_date.isoformat() if p.end_date else None,
                 'complete_date': p.complete_date.isoformat() if p.complete_date else None,
                 'comment': p.comment,
+                'error_code': p.error_code,
+                'error_description': p.error_description,
+                'error_column': p.error_column,
             } for p in phases],
             'udf': {
                 'udf1': udf.udf1 if udf else None,

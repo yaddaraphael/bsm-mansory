@@ -223,7 +223,7 @@ SPECTRUM_COMPANY_CODE = config('SPECTRUM_COMPANY_CODE', default='BSM')
 SPECTRUM_TIMEOUT = config('SPECTRUM_TIMEOUT', default=30, cast=int)
 SPECTRUM_DIVISIONS = [
     d.strip()
-    for d in config('SPECTRUM_DIVISIONS', default='111,121,131,135,145,115').split(',')
+    for d in config('SPECTRUM_DIVISIONS', default='111,121,131,135').split(',')
     if d.strip()
 ]
 

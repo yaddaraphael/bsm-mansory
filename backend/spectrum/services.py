@@ -29,6 +29,8 @@ from zeep.exceptions import Fault
 from zeep.helpers import serialize_object
 from zeep.transports import Transport
 
+from .utils import filter_divisions, normalize_statuses, ALLOWED_PHASE_COST_TYPES
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,8 +55,8 @@ class SpectrumSOAPClient:
         # Divisions to loop when you say "all divisions".
         # Put the real list in settings.py:
         # SPECTRUM_DIVISIONS = ["111", "121", ...]
-        self.default_divisions: List[str] = list(
-            getattr(settings, "SPECTRUM_DIVISIONS", ["111", "121", "131", "135", "145", "115"])
+        self.default_divisions = filter_divisions(
+            list(getattr(settings, "SPECTRUM_DIVISIONS", ["111", "121", "131", "135"]))
         )
 
         if not self.endpoint:
@@ -75,6 +77,7 @@ class SpectrumSOAPClient:
         # Cache zeep clients per exact WSDL URL
         self._client_cache: Dict[str, Client] = {}
         self._cache_lock = Lock()
+        self._job_contact_wsdl_failed = False
 
     # -----------------------
     # Core WSDL helpers
@@ -515,16 +518,23 @@ class SpectrumSOAPClient:
             raise
 
     def get_job_contacts(self, company_code: Optional[str] = None, job_number: Optional[str] = None) -> List[Dict[str, Any]]:
-        client, used_wsdl = self._get_client_with_fallback(["GetJobContact", "GetJobContacts"])
-        service = client.service
+        method = None
+        used_wsdl = "GetJobContact"
+        try:
+            client, used_wsdl = self._get_client_with_fallback(["GetJobContact"])
+            service = client.service
+            if hasattr(service, "GetJobContact"):
+                method = getattr(service, "GetJobContact")
+        except Exception as e:
+            if not self._job_contact_wsdl_failed:
+                logger.warning("GetJobContact WSDL unavailable, falling back to GetJobContacts. Error: %s", e)
+                self._job_contact_wsdl_failed = True
+            client, used_wsdl = self._get_client_with_fallback(["GetJobContacts"])
+            service = client.service
+            if hasattr(service, "GetJobContacts"):
+                method = getattr(service, "GetJobContacts")
 
-        if used_wsdl == "GetJobContacts" and hasattr(service, "GetJobContacts"):
-            method = getattr(service, "GetJobContacts")
-        elif hasattr(service, "GetJobContact"):
-            method = getattr(service, "GetJobContact")
-        elif hasattr(service, "GetJobContacts"):
-            method = getattr(service, "GetJobContacts")
-        else:
+        if method is None:
             available = [m for m in dir(service) if not m.startswith("_")]
             raise RuntimeError(f"No GetJobContact(s) method found. Available: {available}")
 
@@ -615,19 +625,17 @@ class SpectrumSOAPClient:
         cost_center: Optional[str] = None,
         sort_by: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        divs = divisions or self.default_divisions
+        divs = filter_divisions(divisions or self.default_divisions)
         
         # Handle status_code (single value) or statuses (list)
-        if statuses is not None:
-            stats = statuses
-        elif status_code is not None:
-            stats = [status_code]
-        else:
-            stats = ["A", "I", "C"]  # Default: fetch all statuses
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
 
         logger.info("Fetching all jobs by divisions=%s statuses=%s", divs, stats)
 
         all_rows: List[Dict[str, Any]] = []
+        if not divs or not stats:
+            logger.info("No divisions or statuses to fetch; returning empty jobs list.")
+            return []
         for div in divs:
             for st in stats:
                 rows = self.get_jobs(
@@ -675,19 +683,17 @@ class SpectrumSOAPClient:
           2) If rowcount looks capped: collect Cost_Center values from those rows
           3) Re-fetch GetJobMain(div, status, cost_center=each) and union by (Company_Code, Job_Number)
         """
-        divs = divisions or self.default_divisions
+        divs = filter_divisions(divisions or self.default_divisions)
         
         # Handle status_code (single value) or statuses (list)
-        if statuses is not None:
-            stats = statuses
-        elif status_code is not None:
-            stats = [status_code]
-        else:
-            stats = ["A", "I", "C"]  # Default: fetch all statuses
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
 
         logger.info("Fetching all job main by divisions=%s statuses=%s", divs, stats)
 
         all_rows: List[Dict[str, Any]] = []
+        if not divs or not stats:
+            logger.info("No divisions or statuses to fetch; returning empty job main list.")
+            return []
 
         for div in divs:
             for st in stats:
@@ -765,19 +771,17 @@ class SpectrumSOAPClient:
         status_code: Optional[str] = None,
         statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        divs = divisions or self.default_divisions
+        divs = filter_divisions(divisions or self.default_divisions)
         
         # Handle status_code (single value) or statuses (list)
-        if statuses is not None:
-            stats = statuses
-        elif status_code is not None:
-            stats = [status_code]
-        else:
-            stats = ["A", "I", "C"]  # Default: fetch all statuses
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
 
         logger.info("Fetching all job dates by divisions=%s statuses=%s", divs, stats)
 
         all_rows: List[Dict[str, Any]] = []
+        if not divs or not stats:
+            logger.info("No divisions or statuses to fetch; returning empty job dates list.")
+            return []
         for div in divs:
             for st in stats:
                 rows = self.get_job_dates(company_code=company_code, division=div, status_code=st)
@@ -795,19 +799,17 @@ class SpectrumSOAPClient:
         status_code: Optional[str] = None,
         statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        divs = divisions or self.default_divisions
+        divs = filter_divisions(divisions or self.default_divisions)
         
         # Handle status_code (single value) or statuses (list)
-        if statuses is not None:
-            stats = statuses
-        elif status_code is not None:
-            stats = [status_code]
-        else:
-            stats = ["A", "I", "C"]  # Default: fetch all statuses
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
 
         logger.info("Fetching all job UDF by divisions=%s statuses=%s", divs, stats)
 
         all_rows: List[Dict[str, Any]] = []
+        if not divs or not stats:
+            logger.info("No divisions or statuses to fetch; returning empty job UDF list.")
+            return []
         for div in divs:
             for st in stats:
                 rows = self.get_job_udf(company_code=company_code, division=div, status_code=st)
@@ -817,6 +819,9 @@ class SpectrumSOAPClient:
         unique = self._dedupe_company_job(all_rows)
         logger.info("Total job UDF rows fetched: %s (unique=%s)", len(all_rows), len(unique))
         return unique
+    
+
+    
 
     def get_phase_enhanced(
         self,
@@ -877,3 +882,133 @@ class SpectrumSOAPClient:
         except Exception as e:
             logger.error(f"Error calling Spectrum service GetPhaseEnhanced.GetPhaseEnhanced: {e}", exc_info=True)
             raise
+
+    def get_phase(
+        self,
+        company_code: Optional[str] = None,
+        job_number: Optional[str] = None,
+        status_code: Optional[str] = None,
+        cost_type: Optional[str] = None,
+        cost_center: Optional[str] = None,
+        sort_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get phase information from Spectrum using the GetPhase web service.
+        """
+        params: Dict[str, Any] = {
+            "Authorization_ID": self.authorization_id,
+            "GUID": self._get_guid(),
+        }
+
+        company_to_use = company_code or self.company_code
+        if company_to_use:
+            params["pCompany_Code"] = company_to_use
+        if job_number:
+            params["pJob_Number"] = job_number
+        else:
+            params["pJob_Number"] = ""
+        if status_code is not None:
+            params["pStatus_Code"] = status_code
+        else:
+            params["pStatus_Code"] = ""
+        if cost_type:
+            params["pCost_Type"] = cost_type
+        else:
+            params["pCost_Type"] = ""
+        if cost_center:
+            params["pCost_Center"] = cost_center
+        else:
+            params["pCost_Center"] = ""
+        if sort_by:
+            params["pSort_By"] = sort_by
+        else:
+            params["pSort_By"] = ""
+
+        client = self._get_soap_client("GetPhase")
+        service = getattr(client.service, "GetPhase")
+
+        try:
+            logger.info(
+                "Calling GetPhase with company=%s job_number=%s status=%s cost_type=%s",
+                company_to_use,
+                job_number,
+                status_code,
+                cost_type,
+            )
+            response = service(**params)
+            rows = self._parse_to_rows(response, hint="GetPhase")
+            logger.info("GetPhase parsed %s rows", len(rows))
+            return rows
+        except Fault as fault:
+            logger.error("Spectrum SOAP Fault calling GetPhase.GetPhase: %s", fault, exc_info=True)
+            raise
+        except Exception as e:
+            logger.error("Error calling Spectrum service GetPhase.GetPhase: %s", e, exc_info=True)
+            raise
+
+    def get_all_phases_by_status(
+        self,
+        company_code: Optional[str] = None,
+        status_code: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        cost_type: Optional[str] = None,
+        cost_center: Optional[str] = None,
+        sort_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
+        logger.info("Fetching all phases by statuses=%s", stats)
+
+        if not stats:
+            return []
+
+        all_rows: List[Dict[str, Any]] = []
+        for st in stats:
+            rows = self.get_phase(
+                company_code=company_code,
+                status_code=st,
+                cost_type=cost_type,
+                cost_center=cost_center,
+                sort_by=sort_by,
+            )
+            all_rows.extend(rows)
+            logger.info("Fetched %s phase rows for status %s", len(rows), st)
+        return all_rows
+
+    def get_all_phases_enhanced_by_status(
+        self,
+        company_code: Optional[str] = None,
+        status_code: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        cost_type: Optional[str] = None,
+        cost_center: Optional[str] = None,
+        sort_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        stats = normalize_statuses(status_code=status_code, statuses=statuses)
+        logger.info("Fetching all enhanced phases by statuses=%s", stats)
+
+        if not stats:
+            return []
+
+        if cost_type:
+            cost_types = [cost_type]
+        else:
+            cost_types = sorted(ALLOWED_PHASE_COST_TYPES)
+
+        all_rows: List[Dict[str, Any]] = []
+        for st in stats:
+            for ct in cost_types:
+                rows = self.get_phase_enhanced(
+                    company_code=company_code,
+                    status_code=st,
+                    cost_type=ct,
+                    cost_center=cost_center,
+                    sort_by=sort_by,
+                )
+                all_rows.extend(rows)
+                logger.info(
+                    "Fetched %s enhanced phase rows for status %s cost_type %s",
+                    len(rows),
+                    st,
+                    ct,
+                )
+        return all_rows

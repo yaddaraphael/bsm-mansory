@@ -11,6 +11,42 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+EXCLUDED_DIVISIONS = {"145", "115"}
+ALLOWED_STATUS_CODES = {"A", "I"}
+ALLOWED_PHASE_COST_TYPES = {"S", "L"}
+
+
+def filter_divisions(divisions: Optional[list[str]]) -> list[str]:
+    if not divisions:
+        return []
+    seen: set[str] = set()
+    filtered: list[str] = []
+    for div in divisions:
+        if not div:
+            continue
+        text = str(div).strip()
+        if not text or text in EXCLUDED_DIVISIONS:
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        filtered.append(text)
+    return filtered
+
+
+def normalize_statuses(status_code: Optional[str] = None, statuses: Optional[list[str]] = None) -> list[str]:
+    if statuses is not None:
+        allowed = [str(s).strip().upper() for s in statuses if str(s).strip().upper() in ALLOWED_STATUS_CODES]
+        return allowed
+    if status_code is None:
+        return ["A", "I"]
+    text = str(status_code).strip().upper()
+    if text in ("", "ALL"):
+        return ["A", "I"]
+    if text in ALLOWED_STATUS_CODES:
+        return [text]
+    return []
+
 
 def safe_strip(value: Any) -> Any:
     """Safely strip a value, returning None if value is None or empty string."""
@@ -80,3 +116,12 @@ def parse_decimal(value: Any) -> Optional[Decimal]:
         return Decimal(str(value).strip())
     except (InvalidOperation, ValueError):
         return None
+
+
+def parse_decimal_or_zero(value: Any) -> Decimal:
+    """
+    Parse a decimal, returning Decimal("0") for blank/invalid values.
+    Useful for quantity fields when UOM is missing.
+    """
+    parsed = parse_decimal(value)
+    return parsed if parsed is not None else Decimal("0")

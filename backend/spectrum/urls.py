@@ -14,10 +14,8 @@ urlpatterns = [
     path('jobs/phases/fetch/', views.get_phase_from_spectrum, name='fetch_phases'),
     path('jobs/phases/enhanced/fetch/', views.get_phase_enhanced_from_spectrum, name='fetch_phases_enhanced'),
     path('jobs/cost-projections/post/', views.post_job_cost_projection, name='post_job_cost_projection'),
-    path('jobs/udf/fetch/', views.get_job_udf_from_spectrum, name='fetch_job_udf'),
     path('jobs/dates/import/', views.import_job_dates_to_database, name='import_job_dates'),
     path('jobs/phases/import/', views.import_phases_to_database, name='import_phases'),
-    path('jobs/udf/import/', views.import_job_udfs_to_database, name='import_job_udfs'),
     path('projects/<str:job_number>/comprehensive/', views.get_project_comprehensive_details, name='get_project_comprehensive'),
     path('jobs/<str:company_code>/<str:job_number>/details/', views.get_job_details, name='get_job_details'),
 ]

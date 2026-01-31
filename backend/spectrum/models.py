@@ -17,8 +17,6 @@ class SpectrumJob(models.Model):
     state = models.CharField(max_length=2, blank=True, null=True)
     zip_code = models.CharField(max_length=10, blank=True, null=True)
     project_manager = models.CharField(max_length=15, blank=True, null=True)
-    superintendent = models.CharField(max_length=15, blank=True, null=True)
-    estimator = models.CharField(max_length=15, blank=True, null=True)
     certified_flag = models.CharField(max_length=1, blank=True, null=True)
     customer_code = models.CharField(max_length=10, blank=True, null=True)
     status_code = models.CharField(
@@ -74,7 +72,6 @@ class SpectrumJob(models.Model):
             models.Index(fields=['company_code', 'job_number']),
             models.Index(fields=['status_code']),
             models.Index(fields=['project_manager']),
-            models.Index(fields=['superintendent']),
         ]
         verbose_name = 'Spectrum Job'
         verbose_name_plural = 'Spectrum Jobs'
@@ -92,8 +89,6 @@ class SpectrumJobContact(models.Model):
     job_description = models.CharField(max_length=25, blank=True, null=True)
     status_code = models.CharField(max_length=1, blank=True, null=True, help_text="Job status")
     project_manager = models.CharField(max_length=15, blank=True, null=True)
-    superintendent = models.CharField(max_length=15, blank=True, null=True)
-    estimator = models.CharField(max_length=15, blank=True, null=True)
     cost_center = models.CharField(max_length=10, blank=True, null=True)
     
     # Contact fields

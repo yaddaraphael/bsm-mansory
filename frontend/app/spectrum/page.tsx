@@ -8,6 +8,33 @@ import api from '@/lib/api';
 import DataTable from '@/components/ui/DataTable';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 
+const formatText = (value?: string | number | null) => {
+ if (value === null || value === undefined) return '-';
+ const str = String(value).trim();
+ return str ? str : '-';
+};
+
+const formatNumber = (value?: number | string | null, maxFractionDigits = 2) => {
+ if (value === null || value === undefined || value === '') return '-';
+ const num = Number(value);
+ if (Number.isNaN(num)) return '-';
+ return num.toLocaleString('en-US', { maximumFractionDigits: maxFractionDigits });
+};
+
+const formatCurrency = (value?: number | string | null) => {
+ if (value === null || value === undefined || value === '') return '-';
+ const num = Number(value);
+ if (Number.isNaN(num)) return '-';
+ return num.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+};
+
+const formatDate = (value?: string | Date | null) => {
+ if (!value) return '-';
+ const date = new Date(String(value));
+ if (Number.isNaN(date.getTime())) return '-';
+ return date.toLocaleDateString();
+};
+
 interface SpectrumJob {
  id?: string;
  Company_Code?: string;
@@ -179,36 +206,6 @@ interface SpectrumJobCostProjection {
  Error_Column?: string;
 }
 
-interface SpectrumJobUDF {
- id?: string;
- Company_Code?: string;
- Job_Number?: string;
- Division?: string;
- UDF1?: string;
- UDF2?: string;
- UDF3?: string;
- UDF4?: string;
- UDF5?: string;
- UDF6?: string;
- UDF7?: string;
- UDF8?: string;
- UDF9?: string;
- UDF10?: string;
- UDF11?: string;
- UDF12?: string;
- UDF13?: string;
- UDF14?: string;
- UDF15?: string;
- UDF16?: string;
- UDF17?: string;
- UDF18?: string;
- UDF19?: string;
- UDF20?: string;
- Error_Code?: string;
- Error_Description?: string;
- Error_Column?: string;
-}
-
 interface SpectrumJobContact {
  id?: string;
  Company_Code?: string;
@@ -272,7 +269,7 @@ interface FilterParams {
 export default function SpectrumPage() {
  const { user, loading: authLoading } = useAuth();
  const router = useRouter();
- const [activeTab, setActiveTab] = useState<'getjob' | 'getjobmain' | 'getjobcontact' | 'getjobdates' | 'getphase' | 'getphaseenhanced' | 'costprojections' | 'getjobudf' | 'imported'>('getjob');
+ const [activeTab, setActiveTab] = useState<'getjob' | 'getjobmain' | 'getjobcontact' | 'getjobdates' | 'getphase' | 'getphaseenhanced' | 'costprojections' | 'imported'>('getjob');
  const [loading, setLoading] = useState(false);
  const [jobs, setJobs] = useState<SpectrumJob[]>([]);
  const [jobMain, setJobMain] = useState<SpectrumJobMain[]>([]);
@@ -280,7 +277,6 @@ export default function SpectrumPage() {
  const [jobDates, setJobDates] = useState<SpectrumJobDates[]>([]);
  const [phases, setPhases] = useState<SpectrumPhase[]>([]);
  const [phasesEnhanced, setPhasesEnhanced] = useState<SpectrumPhaseEnhanced[]>([]);
- const [jobUDFs, setJobUDFs] = useState<SpectrumJobUDF[]>([]);
  const [importedJobs, setImportedJobs] = useState<ImportedJob[]>([]);
  const [error, setError] = useState<string | null>(null);
  const [success, setSuccess] = useState<string | null>(null);
@@ -303,8 +299,6 @@ export default function SpectrumPage() {
  const [pageSizePhases, setPageSizePhases] = useState(50);
  const [currentPagePhasesEnhanced, setCurrentPagePhasesEnhanced] = useState(1);
  const [pageSizePhasesEnhanced, setPageSizePhasesEnhanced] = useState(50);
- const [currentPageUDFs, setCurrentPageUDFs] = useState(1);
- const [pageSizeUDFs, setPageSizeUDFs] = useState(50);
  
  // Group phases by job number for display
  const [expandedJobNumbers, setExpandedJobNumbers] = useState<Set<string>>(new Set());
@@ -348,16 +342,6 @@ export default function SpectrumPage() {
  const [contactFilters, setContactFilters] = useState({
   company_code: 'BSM',
   job_number: '',
-  status_code: 'ALL',
-  project_manager: '',
-  superintendent: '',
-  estimator: '',
-  first_name: '',
-  last_name: '',
-  phone_number: '',
-  title: '',
-  cost_center: '',
-  sort_by: '',
  });
  
  // Page size options
@@ -519,23 +503,10 @@ export default function SpectrumPage() {
   try {
    const params: FilterParams = {};
    if (contactFilters.company_code) params.company_code = contactFilters.company_code;
-   if (contactFilters.status_code) params.status_code = contactFilters.status_code;
-   if (contactFilters.sort_by) params.sort_by = contactFilters.sort_by;
-   
-   // GetJobContact requires at least one filter: job_number, last_name, project_manager, first_name, or phone_number
    if (contactFilters.job_number) params.job_number = contactFilters.job_number;
-   if (contactFilters.project_manager) params.project_manager = contactFilters.project_manager;
-   if (contactFilters.superintendent) params.superintendent = contactFilters.superintendent;
-   if (contactFilters.estimator) params.estimator = contactFilters.estimator;
-   if (contactFilters.last_name) params.last_name = contactFilters.last_name;
-   if (contactFilters.first_name) params.first_name = contactFilters.first_name;
-   if (contactFilters.phone_number) params.phone_number = contactFilters.phone_number;
-   if (contactFilters.title) params.title = contactFilters.title;
-   if (contactFilters.cost_center) params.cost_center = contactFilters.cost_center;
    
-   // Check if we have at least one required filter
-   if (!params.job_number && !params.last_name && !params.project_manager && !params.first_name && !params.phone_number) {
-    setError('GetJobContact requires at least one filter. Please provide Job Number, Last Name, Project Manager, First Name, or Phone Number.');
+   if (!params.job_number) {
+    setError('GetJobContact requires a Job Number.');
     setLoading(false);
     return;
    }
@@ -658,41 +629,6 @@ export default function SpectrumPage() {
   }
  };
 
- const fetchJobUDFs = async () => {
-  setLoading(true);
-  setError(null);
-  setSuccess(null);
-  
-  try {
-   const params: FilterParams = {
-    company_code: filters.company_code || undefined,
-    division: filters.division || undefined,
-    status_code: filters.status_code || undefined,
-    project_manager: filters.project_manager || undefined,
-    superintendent: filters.superintendent || undefined,
-    estimator: filters.estimator || undefined,
-    customer_code: filters.customer_code || undefined,
-    cost_center: filters.cost_center || undefined,
-   };
-   
-   const response = await api.get('/spectrum/jobs/udf/fetch/', { params });
-   const fetchedUDFs = response.data.results || [];
-   const allUDFs = fetchedUDFs.map((udf: SpectrumJobUDF, index: number) => ({
-    ...udf,
-    id: `${udf.Company_Code || ''}-${udf.Job_Number || ''}-${index}`,
-   }));
-   setJobUDFs(allUDFs);
-   setCurrentPageUDFs(1);
-   setSuccess(`Successfully fetched ${response.data.count || 0} job UDFs from Spectrum`);
-  } catch (err) {
-   const error = err as ApiError;
-   const errorMsg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Failed to fetch job UDFs from Spectrum';
-   setError(errorMsg);
-   setJobUDFs([]);
-  } finally {
-   setLoading(false);
-  }
- };
 
  const postCostProjection = async (projectionData: SpectrumJobCostProjection) => {
   setLoading(true);
@@ -768,27 +704,6 @@ export default function SpectrumPage() {
   }
  };
 
- const importJobUDFsToDatabase = async () => {
-  if (jobUDFs.length === 0) {
-   setError('No job UDFs data to import. Please fetch data first.');
-   return;
-  }
-  
-  setLoading(true);
-  setError(null);
-  setSuccess(null);
-  
-  try {
-   const response = await api.post('/spectrum/jobs/udf/import/', { results: jobUDFs });
-   setSuccess(response.data.detail || `Successfully imported ${response.data.imported || 0} new job UDFs and updated ${response.data.updated || 0} existing job UDFs.`);
-  } catch (err) {
-   const error = err as ApiError;
-   const errorMsg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Failed to import job UDFs to database';
-   setError(errorMsg);
-  } finally {
-   setLoading(false);
-  }
- };
 
  useEffect(() => {
   if (activeTab === 'imported') {
@@ -1290,16 +1205,6 @@ export default function SpectrumPage() {
         Cost Projections
        </button>
        <button
-        onClick={() => setActiveTab('getjobudf')}
-        className={`${
-         activeTab === 'getjobudf'
-          ? 'border-blue-500 text-blue-600'
-          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-        } whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm`}
-       >
-        GetJobUDF ({jobUDFs.length})
-       </button>
-       <button
         onClick={() => setActiveTab('imported')}
         className={`${
          activeTab === 'imported'
@@ -1578,7 +1483,7 @@ export default function SpectrumPage() {
        <div className="mb-6 space-y-4">
         <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4">
          <p className="text-sm text-blue-800">
-          <strong>Note:</strong> GetJobContact requires at least one filter: Job Number, Last Name, Project Manager, First Name, or Phone Number.
+          <strong>Note:</strong> GetJobContact requires a Job Number.
          </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
@@ -1598,107 +1503,15 @@ export default function SpectrumPage() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
            Job Number <span className="text-red-500">*</span>
           </label>
-          <input
-           type="text"
-           value={contactFilters.job_number}
-           onChange={(e) => setContactFilters({ ...contactFilters, job_number: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Required (or use other filters)"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Last Name <span className="text-red-500">*</span>
-          </label>
-          <input
-           type="text"
-           value={contactFilters.last_name}
-           onChange={(e) => setContactFilters({ ...contactFilters, last_name: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Required (or use other filters)"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           First Name
-          </label>
-          <input
-           type="text"
-           value={contactFilters.first_name}
-           onChange={(e) => setContactFilters({ ...contactFilters, first_name: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Optional"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Phone Number
-          </label>
-          <input
-           type="text"
-           value={contactFilters.phone_number}
-           onChange={(e) => setContactFilters({ ...contactFilters, phone_number: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Optional"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Project Manager <span className="text-red-500">*</span>
-          </label>
-          <input
-           type="text"
-           value={contactFilters.project_manager}
-           onChange={(e) => setContactFilters({ ...contactFilters, project_manager: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Required (or use other filters)"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Title
-          </label>
-          <input
-           type="text"
-           value={contactFilters.title}
-           onChange={(e) => setContactFilters({ ...contactFilters, title: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-           placeholder="Optional"
-          />
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Status Code
-          </label>
-          <select
-           value={contactFilters.status_code}
-           onChange={(e) => setContactFilters({ ...contactFilters, status_code: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-           <option value="ALL">All Statuses</option>
-           <option value="A">Active</option>
-           <option value="I">Inactive</option>
-           <option value="C">Complete</option>
-          </select>
-         </div>
-         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-           Sort By
-          </label>
-          <select
-           value={contactFilters.sort_by}
-           onChange={(e) => setContactFilters({ ...contactFilters, sort_by: e.target.value })}
-           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-           <option value="">Company Code</option>
-           <option value="C">Contact ID</option>
-           <option value="P">Project Manager</option>
-           <option value="S">Superintendent</option>
-           <option value="E">Estimator</option>
-           <option value="L">Last Name</option>
-          </select>
-         </div>
+         <input
+          type="text"
+          value={contactFilters.job_number}
+          onChange={(e) => setContactFilters({ ...contactFilters, job_number: e.target.value })}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+           placeholder="Required"
+         />
         </div>
+       </div>
 
         <div className="flex space-x-3">
          <button
@@ -2083,80 +1896,6 @@ export default function SpectrumPage() {
        </div>
       )}
 
-      {activeTab === 'getjobudf' && (
-       <div>
-        {jobUDFs.length > 0 ? (
-         <>
-          <div className="mb-4 flex space-x-3">
-           <button
-            onClick={fetchJobUDFs}
-            disabled={loading}
-            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-[#772025] text-white rounded-md hover:bg-[#5a181c] disabled:bg-gray-400"
-           >
-            {loading ? 'Fetching...' : 'Fetch Job UDFs from Spectrum'}
-           </button>
-           <button
-            onClick={importJobUDFsToDatabase}
-            disabled={loading}
-            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-           >
-            {loading ? 'Importing...' : 'Import to Database'}
-           </button>
-          </div>
-          <DataTable 
-           data={jobUDFs.slice((currentPageUDFs - 1) * pageSizeUDFs, currentPageUDFs * pageSizeUDFs)} 
-           columns={[
-            { header: 'Company', accessor: (row: SpectrumJobUDF) => row.Company_Code || '-' },
-            { 
-             header: 'Job Number', 
-             accessor: (row: SpectrumJobUDF) => (
-              <button
-               onClick={() => handleJobNumberClick(row.Company_Code, row.Job_Number)}
-               className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-              >
-               {row.Job_Number || '-'}
-              </button>
-             )
-            },
-            { header: 'Division', accessor: (row: SpectrumJobUDF) => row.Division || '-' },
-            { header: 'UDF1', accessor: (row: SpectrumJobUDF) => row.UDF1 || '-' },
-            { header: 'UDF2', accessor: (row: SpectrumJobUDF) => row.UDF2 || '-' },
-            { header: 'UDF3', accessor: (row: SpectrumJobUDF) => row.UDF3 || '-' },
-            { header: 'UDF4', accessor: (row: SpectrumJobUDF) => row.UDF4 || '-' },
-            { header: 'UDF5', accessor: (row: SpectrumJobUDF) => row.UDF5 || '-' },
-            { header: 'UDF6', accessor: (row: SpectrumJobUDF) => row.UDF6 || '-' },
-            { header: 'UDF7', accessor: (row: SpectrumJobUDF) => row.UDF7 || '-' },
-            { header: 'UDF8', accessor: (row: SpectrumJobUDF) => row.UDF8 || '-' },
-            { header: 'UDF9', accessor: (row: SpectrumJobUDF) => row.UDF9 || '-' },
-            { header: 'UDF10', accessor: (row: SpectrumJobUDF) => row.UDF10 || '-' },
-           ]} 
-          />
-          <PaginationControls
-           currentPage={currentPageUDFs}
-           totalPages={Math.ceil(jobUDFs.length / pageSizeUDFs)}
-           pageSize={pageSizeUDFs}
-           onPageChange={setCurrentPageUDFs}
-           onPageSizeChange={setPageSizeUDFs}
-           totalItems={jobUDFs.length}
-          />
-         </>
-        ) : (
-         <div className="text-center py-8 text-gray-500">
-          {loading ? 'Fetching job UDFs...' : 'No job UDFs fetched yet. Click &quot;Fetch Job UDFs from Spectrum&quot; to load data.'}
-          <div className="mt-4">
-           <button
-            onClick={fetchJobUDFs}
-            disabled={loading}
-            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-[#772025] text-white rounded-md hover:bg-[#5a181c] disabled:bg-gray-400"
-           >
-            {loading ? 'Fetching...' : 'Fetch Job UDFs from Spectrum'}
-           </button>
-          </div>
-         </div>
-        )}
-       </div>
-      )}
-
       {activeTab === 'imported' && (
        <div>
         {loading ? (
@@ -2321,39 +2060,49 @@ export default function SpectrumPage() {
           <div>
            <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Phases ({comprehensiveJobDetails.phases.length})</h3>
            <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-             <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+             <thead className="bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phase Code</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Type</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">JTD Cost</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Cost</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estimated Cost</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+               <th className="px-3 py-2 text-left">Phase Code</th>
+               <th className="px-3 py-2 text-left">Cost Type</th>
+               <th className="px-3 py-2 text-left">Description</th>
+               <th className="px-3 py-2 text-left">Status</th>
+               <th className="px-3 py-2 text-left">UOM</th>
+               <th className="px-3 py-2 text-right">JTD Qty</th>
+               <th className="px-3 py-2 text-right">JTD Hours</th>
+               <th className="px-3 py-2 text-right">JTD $</th>
+               <th className="px-3 py-2 text-right">Projected Qty</th>
+               <th className="px-3 py-2 text-right">Projected Hours</th>
+               <th className="px-3 py-2 text-right">Projected $</th>
+               <th className="px-3 py-2 text-right">Estimated Qty</th>
+               <th className="px-3 py-2 text-right">Estimated Hours</th>
+               <th className="px-3 py-2 text-right">Estimated $</th>
+               <th className="px-3 py-2 text-left">Cost Center</th>
               </tr>
              </thead>
              <tbody className="bg-white divide-y divide-gray-200">
               {comprehensiveJobDetails.phases.map((phase: Record<string, unknown>, idx: number) => (
                <tr key={idx} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.phase_code || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.cost_type || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">{String(phase.description || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {phase.jtd_actual_dollars ? `$${typeof phase.jtd_actual_dollars === 'number' ? phase.jtd_actual_dollars.toLocaleString() : String(phase.jtd_actual_dollars)}` : '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {phase.projected_dollars ? `$${typeof phase.projected_dollars === 'number' ? phase.projected_dollars.toLocaleString() : String(phase.projected_dollars)}` : '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {phase.current_estimated_dollars ? `$${typeof phase.current_estimated_dollars === 'number' ? phase.current_estimated_dollars.toLocaleString() : String(phase.current_estimated_dollars)}` : '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {String(phase.status_code) === 'A' ? 'Active' 
+                <td className="px-3 py-2 text-gray-900">{formatText(phase.phase_code as string)}</td>
+                <td className="px-3 py-2 text-gray-900">{formatText(phase.cost_type as string)}</td>
+                <td className="px-3 py-2 text-gray-900">{formatText(phase.description as string)}</td>
+                <td className="px-3 py-2 text-gray-900">
+                 {String(phase.status_code) === 'A' ? 'Active'
                   : String(phase.status_code) === 'I' ? 'Inactive'
                   : String(phase.status_code) === 'C' ? 'Complete'
-                  : String(phase.status_code || '-')}
+                  : formatText(phase.status_code as string)}
                 </td>
+                <td className="px-3 py-2 text-gray-900">{formatText(phase.unit_of_measure as string)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.jtd_quantity as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.jtd_hours as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(phase.jtd_actual_dollars as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.projected_quantity as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.projected_hours as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(phase.projected_dollars as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.estimated_quantity as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.estimated_hours as number)}</td>
+                <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(phase.current_estimated_dollars as number)}</td>
+                <td className="px-3 py-2 text-gray-900">{formatText(phase.cost_center as string)}</td>
                </tr>
               ))}
              </tbody>
@@ -2395,25 +2144,6 @@ export default function SpectrumPage() {
               ))}
              </tbody>
             </table>
-           </div>
-          </div>
-         )}
-
-         {/* UDFs */}
-         {comprehensiveJobDetails.udf && (
-          <div>
-           <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">User Defined Fields</h3>
-           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => {
-             const udfValue = comprehensiveJobDetails.udf?.[`udf${num}` as keyof typeof comprehensiveJobDetails.udf] as string;
-             if (!udfValue) return null;
-             return (
-              <div key={num}>
-               <label className="text-sm font-medium text-gray-500 block mb-1">UDF{num}</label>
-               <p className="text-base text-gray-900">{udfValue}</p>
-              </div>
-             );
-            })}
            </div>
           </div>
          )}
