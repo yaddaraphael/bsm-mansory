@@ -38,6 +38,7 @@ from .utils import (
     truncate_field,
     parse_date_robust,
     parse_decimal,
+    parse_quantity,
     filter_divisions,
     ALLOWED_PHASE_COST_TYPES,
     ALLOWED_STATUS_CODES,
@@ -630,6 +631,7 @@ class SpectrumSyncEngine:
         company_code: Optional[str],
         sync_time,
         uom_fallback: Optional[Dict[Tuple[str, str, str, str], str]] = None,
+        qty_fallback: Optional[Dict[Tuple[str, str, str, str], Dict[str, Any]]] = None,
     ) -> Tuple[List[SpectrumPhaseEnhanced], Dict[str, Any], Dict[str, Dict[str, Any]], Dict[Tuple[str, str, str, str], str]]:
         stats = {
             "rows_received": len(rows),
@@ -691,14 +693,23 @@ class SpectrumSyncEngine:
                 agg["jtd"] += jtd_dollars
             agg["cost_types"].add(cost_type)
 
-            jtd_quantity = parse_decimal(p.get("JTD_Quantity"))
-            projected_quantity = parse_decimal(p.get("Projected_Quantity"))
-            estimated_quantity = parse_decimal(p.get("Estimated_Quantity"))
-
             key = (company, job_number, phase_code, cost_type)
             parsed_uom_map[key] = unit_of_measure or ""
             if (not unit_of_measure) and uom_fallback:
                 unit_of_measure = uom_fallback.get(key) or unit_of_measure
+
+            jtd_quantity = parse_quantity(p.get("JTD_Quantity"), unit_of_measure)
+            projected_quantity = parse_quantity(p.get("Projected_Quantity"), unit_of_measure)
+            estimated_quantity = parse_quantity(p.get("Estimated_Quantity"), unit_of_measure)
+            if qty_fallback:
+                fallback = qty_fallback.get(key)
+                if fallback:
+                    if jtd_quantity is None:
+                        jtd_quantity = parse_quantity(fallback.get("JTD_Quantity"), unit_of_measure)
+                    if projected_quantity is None:
+                        projected_quantity = parse_quantity(fallback.get("Projected_Quantity"), unit_of_measure)
+                    if estimated_quantity is None:
+                        estimated_quantity = parse_quantity(fallback.get("Estimated_Quantity"), unit_of_measure)
             defaults: Dict[str, Any] = {
                 "company_code": company,
                 "job_number": job_number,
@@ -752,6 +763,7 @@ class SpectrumSyncEngine:
         }
         agg_by_job: Dict[str, Dict[str, Any]] = {}
         uom_fallback: Optional[Dict[Tuple[str, str, str, str], str]] = None
+        qty_fallback: Optional[Dict[Tuple[str, str, str, str], Dict[str, Any]]] = None
 
         job_qs = SpectrumJob.objects.filter(company_code=company_code)
         if status_codes:
@@ -763,8 +775,11 @@ class SpectrumSyncEngine:
         if job_numbers:
             batch_size = 20
 
-            def fetch_job(job_number: str) -> Tuple[str, List[Dict[str, Any]], Dict[Tuple[str, str, str, str], str]]:
+            def fetch_job(
+                job_number: str,
+            ) -> Tuple[str, List[Dict[str, Any]], Dict[Tuple[str, str, str, str], str], Dict[Tuple[str, str, str, str], Dict[str, Any]]]:
                 uom_map: Dict[Tuple[str, str, str, str], str] = {}
+                qty_map: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
                 try:
                     base_rows = self.client.get_phase(
                         company_code=company_code,
@@ -782,6 +797,11 @@ class SpectrumSyncEngine:
                         uom = truncate_field(safe_strip(row.get("Unit_of_Measure")), 3)
                         if uom:
                             uom_map[(company, job, phase, ct)] = uom
+                        qty_map[(company, job, phase, ct)] = {
+                            "JTD_Quantity": row.get("JTD_Quantity"),
+                            "Projected_Quantity": row.get("Projected_Quantity"),
+                            "Estimated_Quantity": row.get("Estimated_Quantity"),
+                        }
                     logger.info("Loaded %s UOM values from GetPhase for job=%s", len(uom_map), job_number)
                 except Exception:
                     logger.warning("Failed to load UOM fallback from GetPhase for job=%s", job_number, exc_info=True)
@@ -792,14 +812,14 @@ class SpectrumSyncEngine:
                     status_code="",
                     cost_type="",
                 )
-                return job_number, rows, uom_map
+                return job_number, rows, uom_map, qty_map
 
             for batch in _chunked(job_numbers, batch_size):
                 with ThreadPoolExecutor(max_workers=max(2, self.config.max_workers // 2)) as ex:
                     futures = [ex.submit(fetch_job, jn) for jn in batch if jn]
                     for f in as_completed(futures):
                         try:
-                            job_number, rows, uom_fallback = f.result()
+                            job_number, rows, uom_fallback, qty_fallback = f.result()
                         except Exception as exc:
                             errors.append(str(exc))
                             logger.warning("GetPhaseEnhanced failed for job=%s: %s", job_number, exc)
@@ -817,6 +837,7 @@ class SpectrumSyncEngine:
                             company_code=company_code,
                             sync_time=sync_time,
                             uom_fallback=uom_fallback,
+                            qty_fallback=qty_fallback,
                         )
                         totals["skipped_errors"] += stats["skipped_errors"]
                         totals["skipped_invalid"] += stats["skipped_invalid"]
@@ -1149,6 +1170,7 @@ class SpectrumSyncEngine:
         jobs_seen: set[str] = set()
         sync_time = timezone.now()
         uom_fallback: Optional[Dict[Tuple[str, str, str, str], str]] = None
+        qty_fallback: Optional[Dict[Tuple[str, str, str, str], Dict[str, Any]]] = None
         if job_number:
             try:
                 base_rows = self.client.get_phase(
@@ -1157,6 +1179,7 @@ class SpectrumSyncEngine:
                     status_code=status_code or "",
                 )
                 uom_fallback = {}
+                qty_fallback = {}
                 for row in base_rows:
                     company = safe_strip(row.get("Company_Code")) or company_to_use or ""
                     job = safe_strip(row.get("Job_Number")) or ""
@@ -1167,6 +1190,11 @@ class SpectrumSyncEngine:
                     uom = truncate_field(safe_strip(row.get("Unit_of_Measure")), 3)
                     if uom:
                         uom_fallback[(company, job, phase, ct)] = uom
+                    qty_fallback[(company, job, phase, ct)] = {
+                        "JTD_Quantity": row.get("JTD_Quantity"),
+                        "Projected_Quantity": row.get("Projected_Quantity"),
+                        "Estimated_Quantity": row.get("Estimated_Quantity"),
+                    }
                 logger.info(
                     "Loaded %s UOM values from GetPhase for job=%s",
                     len(uom_fallback),
@@ -1189,6 +1217,7 @@ class SpectrumSyncEngine:
                     company_code=company_to_use,
                     sync_time=sync_time,
                     uom_fallback=uom_fallback,
+                    qty_fallback=qty_fallback,
                 )
                 totals["skipped_errors"] += stats["skipped_errors"]
                 totals["skipped_invalid"] += stats["skipped_invalid"]

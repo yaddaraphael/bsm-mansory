@@ -111,7 +111,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'branch', 'is_public', 'project_manager']
     search_fields = ['job_number', 'name', 'branch__name']
     ordering_fields = ['updated_at', 'created_at', 'name', 'job_number', 'id']
-    ordering = ['-updated_at']
+    ordering = ['job_number']
 
     # ✅ enable pagination (frontend now requests page/page_size)
     pagination_class = StandardResultsSetPagination

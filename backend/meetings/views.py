@@ -290,10 +290,10 @@ class MeetingViewSet(viewsets.ModelViewSet):
         if include_scopes:
             projects = projects.prefetch_related("scopes")
             from projects.serializers import ProjectSerializer
-            return Response(ProjectSerializer(projects, many=True).data)
+            return Response(ProjectSerializer(projects.order_by("job_number"), many=True).data)
 
         from projects.serializers import ProjectListSerializer
-        return Response(ProjectListSerializer(projects, many=True).data)
+        return Response(ProjectListSerializer(projects.order_by("job_number"), many=True).data)
 
     # ---------------------------------------------------------
     # /meetings/meetings/project_phases/?project_id=123

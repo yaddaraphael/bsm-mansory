@@ -322,69 +322,6 @@ class SpectrumPhaseEnhanced(models.Model):
         return f"{self.company_code}-{self.job_number}: {self.phase_code} ({self.cost_type}) - Enhanced"
 
 
-class SpectrumJobCostProjection(models.Model):
-    """
-    Stores job cost projection information imported from Spectrum's JobCostProjections service.
-    This is used to POST/UPDATE projections to Spectrum.
-    """
-    company_code = models.CharField(max_length=3, help_text="Valid Spectrum Company")
-    job_number = models.CharField(max_length=10, help_text="Job File Maintenance")
-    phase_code = models.CharField(max_length=20, help_text="Phase number (no dashes)")
-    cost_type = models.CharField(max_length=3, help_text="Cost type")
-    transaction_date = models.DateField(help_text="Transaction Date (MM/DD/CCYY)")
-    
-    # Projection values (at least one required: Amount, Projected_Hours, or Projected_Quantity)
-    amount = models.DecimalField(
-        max_digits=14, 
-        decimal_places=2, 
-        blank=True, 
-        null=True, 
-        help_text="Projected Dollars At Completion (allows negative)"
-    )
-    projected_hours = models.DecimalField(
-        max_digits=14, 
-        decimal_places=2, 
-        blank=True, 
-        null=True, 
-        help_text="Projected Hours At Completion (allows negative)"
-    )
-    projected_quantity = models.DecimalField(
-        max_digits=14, 
-        decimal_places=2, 
-        blank=True, 
-        null=True, 
-        help_text="Projected Quantity At Completion (allows negative)"
-    )
-    
-    # Optional fields
-    note = models.CharField(max_length=80, blank=True, null=True, help_text="Memo")
-    operator = models.CharField(max_length=3, blank=True, null=True, help_text="Operator code")
-    
-    # Error fields (for error handling from Spectrum)
-    error_code = models.CharField(max_length=1, blank=True, null=True, help_text="Error Code if any")
-    error_description = models.CharField(max_length=250, blank=True, null=True, help_text="Error Description if any")
-    error_column = models.CharField(max_length=100, blank=True, null=True, help_text="Error Column if any")
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    last_synced_at = models.DateTimeField(null=True, blank=True, help_text="Last time this projection was synced to Spectrum")
-    
-    class Meta:
-        db_table = 'spectrum_job_cost_projection'
-        unique_together = [['company_code', 'job_number', 'phase_code', 'cost_type', 'transaction_date']]
-        indexes = [
-            models.Index(fields=['company_code', 'job_number']),
-            models.Index(fields=['transaction_date']),
-            models.Index(fields=['phase_code', 'cost_type']),
-        ]
-        verbose_name = 'Spectrum Job Cost Projection'
-        verbose_name_plural = 'Spectrum Job Cost Projections'
-    
-    def __str__(self):
-        return f"{self.company_code}-{self.job_number}: {self.phase_code} ({self.cost_type}) - {self.transaction_date}"
-
-
 class SpectrumJobUDF(models.Model):
     """
     Stores job user-defined fields information imported from Spectrum's GetJobUDF service.

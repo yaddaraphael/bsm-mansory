@@ -205,6 +205,14 @@ const scopeBelongsToProject = (scope: ProjectScope, projectId: number) => {
   return true;
 };
 
+const parseJobNumber = (jobNumber?: string) => {
+  if (!jobNumber) return { prefix: Number.MAX_SAFE_INTEGER, suffix: Number.MAX_SAFE_INTEGER };
+  const trimmed = jobNumber.trim();
+  const match = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (!match) return { prefix: Number.MAX_SAFE_INTEGER, suffix: Number.MAX_SAFE_INTEGER, raw: trimmed };
+  return { prefix: Number(match[1]), suffix: Number(match[2]) };
+};
+
 export default function MeetingReviewPage() {
   const router = useRouter();
   const params = useParams();
@@ -694,7 +702,14 @@ export default function MeetingReviewPage() {
       });
     }
 
-    setMeetingJobs(filtered);
+    const sorted = [...filtered].sort((a, b) => {
+      const ap = parseJobNumber(a.project?.job_number);
+      const bp = parseJobNumber(b.project?.job_number);
+      if (ap.prefix !== bp.prefix) return ap.prefix - bp.prefix;
+      if (ap.suffix !== bp.suffix) return ap.suffix - bp.suffix;
+      return String(a.project?.job_number || '').localeCompare(String(b.project?.job_number || ''));
+    });
+    setMeetingJobs(sorted);
     setCurrentPage(1);
   }, [searchTerm, filterBranch, filterProjectManager, allMeetingJobs]);
 

@@ -166,15 +166,15 @@ interface SpectrumPhase {
  Description?: string;
  Status_Code?: string;
  Unit_of_Measure?: string;
- JTD_Quantity?: number;
- JTD_Hours?: number;
- JTD_Actual_Dollars?: number;
- Projected_Quantity?: number;
- Projected_Hours?: number;
- Projected_Dollars?: number;
- Estimated_Quantity?: number;
- Estimated_Hours?: number;
- Current_Estimated_Dollars?: number;
+ JTD_Quantity?: number | null;
+ JTD_Hours?: number | null;
+ JTD_Actual_Dollars?: number | null;
+ Projected_Quantity?: number | null;
+ Projected_Hours?: number | null;
+ Projected_Dollars?: number | null;
+ Estimated_Quantity?: number | null;
+ Estimated_Hours?: number | null;
+ Current_Estimated_Dollars?: number | null;
  Cost_Center?: string;
  Error_Code?: string;
  Error_Description?: string;
@@ -189,22 +189,6 @@ interface SpectrumPhaseEnhanced extends SpectrumPhase {
  Comment?: string;
 }
 
-interface SpectrumJobCostProjection {
- id?: string;
- Company_Code?: string;
- Job_Number?: string;
- Phase_Code?: string;
- Cost_Type?: string;
- Transaction_Date?: string;
- Amount?: number;
- Projected_Hours?: number;
- Projected_Quantity?: number;
- Note?: string;
- Operator?: string;
- Error_Code?: string;
- Error_Description?: string;
- Error_Column?: string;
-}
 
 interface SpectrumJobContact {
  id?: string;
@@ -269,7 +253,7 @@ interface FilterParams {
 export default function SpectrumPage() {
  const { user, loading: authLoading } = useAuth();
  const router = useRouter();
- const [activeTab, setActiveTab] = useState<'getjob' | 'getjobmain' | 'getjobcontact' | 'getjobdates' | 'getphase' | 'getphaseenhanced' | 'costprojections' | 'imported'>('getjob');
+ const [activeTab, setActiveTab] = useState<'getjob' | 'getjobmain' | 'getjobcontact' | 'getjobdates' | 'getphase' | 'getphaseenhanced' | 'imported'>('getjob');
  const [loading, setLoading] = useState(false);
  const [jobs, setJobs] = useState<SpectrumJob[]>([]);
  const [jobMain, setJobMain] = useState<SpectrumJobMain[]>([]);
@@ -319,7 +303,6 @@ export default function SpectrumPage() {
   };
   phases: Array<Record<string, unknown>>;
   udf: Record<string, unknown>;
-  cost_projections: Array<Record<string, unknown>>;
   contacts: Array<Record<string, unknown>>;
  } | null>(null);
  const [loadingDetails, setLoadingDetails] = useState(false);
@@ -629,28 +612,6 @@ export default function SpectrumPage() {
   }
  };
 
-
- const postCostProjection = async (projectionData: SpectrumJobCostProjection) => {
-  setLoading(true);
-  setError(null);
-  setSuccess(null);
-  
-  try {
-   const response = await api.post('/spectrum/jobs/cost-projections/post/', projectionData);
-   if (response.data.success) {
-    setSuccess('Job cost projection posted successfully to Spectrum');
-    // Optionally refresh projections list if we have one
-   } else {
-    setError(response.data.error_description || 'Failed to post job cost projection');
-   }
-  } catch (err) {
-   const error = err as ApiError;
-   const errorMsg = error.response?.data?.detail || error.response?.data?.error || error.message || 'Failed to post job cost projection to Spectrum';
-   setError(errorMsg);
-  } finally {
-   setLoading(false);
-  }
- };
 
  const importJobDatesToDatabase = async () => {
   if (jobDates.length === 0) {
@@ -1193,16 +1154,6 @@ export default function SpectrumPage() {
         } whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm`}
        >
         GetPhaseEnhanced ({phasesEnhanced.length})
-       </button>
-       <button
-        onClick={() => setActiveTab('costprojections')}
-        className={`${
-         activeTab === 'costprojections'
-          ? 'border-blue-500 text-blue-600'
-          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-        } whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm`}
-       >
-        Cost Projections
        </button>
        <button
         onClick={() => setActiveTab('imported')}
@@ -1815,87 +1766,6 @@ export default function SpectrumPage() {
        </div>
       )}
 
-      {activeTab === 'costprojections' && (
-       <div>
-        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
-         <h3 className="font-semibold text-blue-900 mb-2">Post Job Cost Projection</h3>
-         <p className="text-sm text-blue-800 mb-4">
-          Use this form to post job cost projections to Spectrum. At least one of Amount, Projected Hours, or Projected Quantity is required.
-         </p>
-         <form
-          onSubmit={(e) => {
-           e.preventDefault();
-           const formData = new FormData(e.currentTarget);
-           const projectionData: SpectrumJobCostProjection = {
-            Company_Code: formData.get('company_code') as string || 'BSM',
-            Job_Number: formData.get('job_number') as string,
-            Phase_Code: formData.get('phase_code') as string,
-            Cost_Type: formData.get('cost_type') as string,
-            Transaction_Date: formData.get('transaction_date') as string,
-            Amount: formData.get('amount') ? parseFloat(formData.get('amount') as string) : undefined,
-            Projected_Hours: formData.get('projected_hours') ? parseFloat(formData.get('projected_hours') as string) : undefined,
-            Projected_Quantity: formData.get('projected_quantity') ? parseFloat(formData.get('projected_quantity') as string) : undefined,
-            Note: formData.get('note') as string || undefined,
-            Operator: formData.get('operator') as string || undefined,
-           };
-           postCostProjection(projectionData);
-          }}
-          className="grid grid-cols-1 md:grid-cols-2 gap-4"
-         >
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Company Code</label>
-           <input type="text" name="company_code" defaultValue="BSM" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Job Number *</label>
-           <input type="text" name="job_number" required className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Phase Code *</label>
-           <input type="text" name="phase_code" required className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Cost Type *</label>
-           <input type="text" name="cost_type" required className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Transaction Date * (MM/DD/YYYY)</label>
-           <input type="text" name="transaction_date" required placeholder="MM/DD/YYYY" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Amount</label>
-           <input type="number" step="0.01" name="amount" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Projected Hours</label>
-           <input type="number" step="0.01" name="projected_hours" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Projected Quantity</label>
-           <input type="number" step="0.01" name="projected_quantity" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Note (max 80 chars)</label>
-           <input type="text" maxLength={80} name="note" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div>
-           <label className="block text-sm font-medium text-gray-700 mb-1">Operator (max 3 chars)</label>
-           <input type="text" maxLength={3} name="operator" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
-          </div>
-          <div className="md:col-span-2">
-           <button
-            type="submit"
-            disabled={loading}
-            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base bg-[#772025] text-white rounded-md hover:bg-[#5a181c] disabled:bg-gray-400"
-           >
-            {loading ? 'Posting...' : 'Post Cost Projection'}
-           </button>
-          </div>
-         </form>
-        </div>
-       </div>
-      )}
-
       {activeTab === 'imported' && (
        <div>
         {loading ? (
@@ -2103,43 +1973,6 @@ export default function SpectrumPage() {
                 <td className="px-3 py-2 text-right text-gray-900">{formatNumber(phase.estimated_hours as number)}</td>
                 <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(phase.current_estimated_dollars as number)}</td>
                 <td className="px-3 py-2 text-gray-900">{formatText(phase.cost_center as string)}</td>
-               </tr>
-              ))}
-             </tbody>
-            </table>
-           </div>
-          </div>
-         )}
-
-         {/* Cost Projections */}
-         {comprehensiveJobDetails.cost_projections && comprehensiveJobDetails.cost_projections.length > 0 && (
-          <div>
-           <h3 className="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Cost Projections ({comprehensiveJobDetails.cost_projections.length})</h3>
-           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-             <thead className="bg-gray-50">
-              <tr>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phase</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Type</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transaction Date</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Hours</th>
-               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Quantity</th>
-              </tr>
-             </thead>
-             <tbody className="bg-white divide-y divide-gray-200">
-              {comprehensiveJobDetails.cost_projections.map((proj: Record<string, unknown>, idx: number) => (
-               <tr key={idx} className="hover:bg-gray-50">
-                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.phase_code || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.cost_type || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {proj.transaction_date ? new Date(String(proj.transaction_date)).toLocaleDateString() : '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-900">
-                 {proj.amount ? `$${typeof proj.amount === 'number' ? proj.amount.toLocaleString() : String(proj.amount)}` : '-'}
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.projected_hours || '-')}</td>
-                <td className="px-4 py-3 text-sm text-gray-900">{String(proj.projected_quantity || '-')}</td>
                </tr>
               ))}
              </tbody>

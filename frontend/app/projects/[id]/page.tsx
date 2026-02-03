@@ -146,15 +146,15 @@ interface ComprehensiveProjectData {
     description: string;
     status_code: string;
     unit_of_measure?: string;
-    jtd_quantity: number;
-    jtd_hours: number;
-    jtd_actual_dollars: number;
-    projected_quantity: number;
-    projected_hours: number;
-    projected_dollars: number;
-    estimated_quantity: number;
-    estimated_hours: number;
-    current_estimated_dollars: number;
+    jtd_quantity: number | null;
+    jtd_hours: number | null;
+    jtd_actual_dollars: number | null;
+    projected_quantity: number | null;
+    projected_hours: number | null;
+    projected_dollars: number | null;
+    estimated_quantity: number | null;
+    estimated_hours: number | null;
+    current_estimated_dollars: number | null;
     cost_center?: string;
     start_date: string;
     end_date: string;
@@ -183,16 +183,6 @@ interface ComprehensiveProjectData {
     udf19: string;
     udf20: string;
   } | null;
-  cost_projections: Array<{
-    phase_code: string;
-    cost_type: string;
-    transaction_date: string;
-    amount: number;
-    projected_hours: number;
-    projected_quantity: number;
-    note: string;
-    operator: string;
-  }>;
   contacts: Array<{
     contact_id: number;
     first_name: string;
@@ -1315,42 +1305,6 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                               <td className="px-3 py-2 text-gray-700">{formatDate(phase.end_date)}</td>
                               <td className="px-3 py-2 text-gray-700">{formatDate(phase.complete_date)}</td>
                               <td className="px-3 py-2 text-gray-700 whitespace-pre-wrap">{formatText(phase.comment)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-
-                {/* Cost Projections */}
-                {comprehensiveData?.cost_projections && comprehensiveData.cost_projections.length > 0 && (
-                  <Card title={`Cost Projections (${comprehensiveData.cost_projections.length})`}>
-                    <div className="overflow-x-auto w-full">
-                      <table className="w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phase</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost Type</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Transaction Date</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Hours</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Projected Quantity</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {comprehensiveData.cost_projections.map((proj, idx) => (
-                            <tr key={idx} className="hover:bg-gray-50">
-                              <td className="px-4 py-3 text-sm text-gray-900">{formatText(proj.phase_code)}</td>
-                              <td className="px-4 py-3 text-sm text-gray-900">{formatText(proj.cost_type)}</td>
-                              <td className="px-4 py-3 text-sm text-gray-900">
-                                {formatDate(proj.transaction_date)}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-gray-900">
-                                {formatCurrency(proj.amount)}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-gray-900">{formatNumber(proj.projected_hours)}</td>
-                              <td className="px-4 py-3 text-sm text-gray-900">{formatNumber(proj.projected_quantity)}</td>
                             </tr>
                           ))}
                         </tbody>

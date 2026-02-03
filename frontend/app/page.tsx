@@ -42,12 +42,14 @@ export default function Home() {
         <p className="text-gray-500 mb-8">
           Comprehensive project and workforce management system
         </p>
-        <Button
-          onClick={() => router.push('/login')}
-          className="text-lg px-8 py-3"
-        >
-          Get Started
-        </Button>
+        <div className="flex justify-center">
+          <Button
+            onClick={() => router.push('/login')}
+            className="text-lg px-8 py-3"
+          >
+            Get Started
+          </Button>
+        </div>
       </div>
     </main>
   );

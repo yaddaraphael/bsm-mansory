@@ -26,6 +26,20 @@ class BranchViewSet(viewsets.ModelViewSet):
     permission_classes = [BranchViewSetPermission]
     filterset_fields = ['status']
     search_fields = ['name', 'code']
+
+    def get_queryset(self):
+        excluded_codes = {"111", "145"}
+        return (
+            Branch.objects.all()
+            .exclude(
+                Q(spectrum_division_code__in=excluded_codes)
+                | Q(code__in=excluded_codes)
+                | Q(name__icontains="kansas city")
+                | Q(name__icontains="kc")
+                | Q(name__icontains="st george")
+                | Q(name__icontains="st. george")
+            )
+        )
     
     def destroy(self, request, *args, **kwargs):
         """
@@ -521,4 +535,3 @@ class BranchContactViewSet(viewsets.ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('You do not have permission to manage contacts.')
         instance.delete()
-

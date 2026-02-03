@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === '/') {
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    return NextResponse.redirect(url);
+  }
+
   // Public routes that don't require authentication
   const publicRoutes = ['/login', '/', '/public'];
   const isPublicRoute = publicRoutes.some(route => {
@@ -32,4 +38,3 @@ export const config = {
     "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:png|jpg|jpeg|gif|webp|svg|css|js|ico|txt|xml|map)$).*)",
   ],
 };
-

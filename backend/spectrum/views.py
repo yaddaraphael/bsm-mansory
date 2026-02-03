@@ -14,11 +14,11 @@ from django.conf import settings
 
 from .models import (
     SpectrumJob, SpectrumJobDates, SpectrumPhase, SpectrumPhaseEnhanced, 
-    SpectrumJobCostProjection, SpectrumJobUDF, SpectrumJobContact
+    SpectrumJobUDF, SpectrumJobContact
 )
 from .serializers import SpectrumJobSerializer
 from .services import SpectrumSOAPClient
-from .utils import filter_divisions, normalize_statuses, ALLOWED_PHASE_COST_TYPES
+from .utils import filter_divisions, normalize_statuses, ALLOWED_PHASE_COST_TYPES, parse_quantity
 from .sync_engine import run_spectrum_sync, run_spectrum_phase_sync
 from .tasks import sync_spectrum_jobs_manual_task
 from .models import SpectrumSyncRun
@@ -1612,129 +1612,6 @@ def get_job_details(request, company_code: str, job_number: str):
         )
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated, IsRootSuperadmin])
-def post_job_cost_projection(request):
-    """
-    Post job cost projection to Spectrum's JobCostProjections service.
-    Only accessible to root super admins.
-    """
-    try:
-        client = SpectrumSOAPClient()
-        
-        if not client.authorization_id:
-            return Response(
-                {
-                    'detail': 'Spectrum Authorization ID not configured.',
-                    'error': 'Configuration missing'
-                },
-                status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # Get request data
-        data = request.data
-        company_code = data.get('company_code', None)
-        job_number = data.get('job_number', None)
-        phase_code = data.get('phase_code', None)
-        cost_type = data.get('cost_type', None)
-        transaction_date = data.get('transaction_date', None)
-        amount = data.get('amount', None)
-        projected_hours = data.get('projected_hours', None)
-        projected_quantity = data.get('projected_quantity', None)
-        note = data.get('note', None)
-        operator = data.get('operator', None)
-        
-        # Validate required fields
-        if not all([job_number, phase_code, cost_type, transaction_date]):
-            return Response(
-                {
-                    'detail': 'job_number, phase_code, cost_type, and transaction_date are required',
-                    'error': 'Missing required fields'
-                },
-                status=http_status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate that at least one projection value is provided
-        if not any([amount, projected_hours, projected_quantity]):
-            return Response(
-                {
-                    'detail': 'At least one of amount, projected_hours, or projected_quantity must be provided',
-                    'error': 'Missing projection values'
-                },
-                status=http_status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Post projection to Spectrum
-        result = client.post_job_cost_projection(
-            company_code=company_code,
-            job_number=job_number,
-            phase_code=phase_code,
-            cost_type=cost_type,
-            transaction_date=transaction_date,
-            amount=float(amount) if amount is not None else None,
-            projected_hours=float(projected_hours) if projected_hours is not None else None,
-            projected_quantity=float(projected_quantity) if projected_quantity is not None else None,
-            note=note,
-            operator=operator
-        )
-        
-        # Save to database
-        if result.get('success'):
-            defaults = {
-                'amount': float(amount) if amount is not None else None,
-                'projected_hours': float(projected_hours) if projected_hours is not None else None,
-                'projected_quantity': float(projected_quantity) if projected_quantity is not None else None,
-                'note': safe_strip(note),
-                'operator': safe_strip(operator),
-                'error_code': result.get('error_code'),
-                'error_description': result.get('error_description'),
-                'error_column': result.get('error_column'),
-                'last_synced_at': timezone.now(),
-            }
-            
-            # Parse transaction_date (MM/DD/CCYY format)
-            from datetime import datetime
-            try:
-                if isinstance(transaction_date, str):
-                    transaction_date_obj = datetime.strptime(transaction_date, '%m/%d/%Y').date()
-                else:
-                    transaction_date_obj = transaction_date
-            except Exception as e:
-                logger.error(f"Error parsing transaction_date {transaction_date}: {e}")
-                return Response(
-                    {
-                        'detail': f'Invalid transaction_date format. Expected MM/DD/YYYY',
-                        'error': str(e)
-                    },
-                    status=http_status.HTTP_400_BAD_REQUEST
-                )
-            
-            SpectrumJobCostProjection.objects.update_or_create(
-                company_code=company_code or client.company_code,
-                job_number=job_number,
-                phase_code=phase_code,
-                cost_type=cost_type,
-                transaction_date=transaction_date_obj,
-                defaults=defaults
-            )
-        
-        return Response({
-            'success': result.get('success', False),
-            'message': 'Job cost projection posted successfully' if result.get('success') else 'Failed to post job cost projection',
-            'error_code': result.get('error_code'),
-            'error_description': result.get('error_description'),
-            'error_column': result.get('error_column'),
-        }, status=http_status.HTTP_200_OK if result.get('success') else http_status.HTTP_400_BAD_REQUEST)
-        
-    except Exception as e:
-        logger.error(f"Error posting job cost projection to Spectrum: {e}", exc_info=True)
-        return Response(
-            {
-                'detail': f'Failed to post job cost projection to Spectrum: {str(e)}',
-                'error': str(e)
-            },
-            status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
 
 
 @api_view(['GET'])
@@ -1966,17 +1843,18 @@ def import_phases_to_database(request):
                         continue
                     
                     # Common fields for both regular and enhanced phases
+                    unit_of_measure = safe_strip(phase_data.get('Unit_of_Measure'))
                     common_defaults = {
                         'description': safe_strip(phase_data.get('Description')),
                         'status_code': safe_strip(phase_data.get('Status_Code')),
-                        'unit_of_measure': safe_strip(phase_data.get('Unit_of_Measure')),
-                        'jtd_quantity': phase_data.get('JTD_Quantity'),
+                        'unit_of_measure': unit_of_measure,
+                        'jtd_quantity': parse_quantity(phase_data.get('JTD_Quantity'), unit_of_measure),
                         'jtd_hours': phase_data.get('JTD_Hours'),
                         'jtd_actual_dollars': phase_data.get('JTD_Actual_Dollars'),
-                        'projected_quantity': phase_data.get('Projected_Quantity'),
+                        'projected_quantity': parse_quantity(phase_data.get('Projected_Quantity'), unit_of_measure),
                         'projected_hours': phase_data.get('Projected_Hours'),
                         'projected_dollars': phase_data.get('Projected_Dollars'),
-                        'estimated_quantity': phase_data.get('Estimated_Quantity'),
+                        'estimated_quantity': parse_quantity(phase_data.get('Estimated_Quantity'), unit_of_measure),
                         'estimated_hours': phase_data.get('Estimated_Hours'),
                         'current_estimated_dollars': phase_data.get('Current_Estimated_Dollars'),
                         'cost_center': safe_strip(phase_data.get('Cost_Center')),
@@ -2128,7 +2006,7 @@ def import_job_udfs_to_database(request):
 def get_project_comprehensive_details(request, job_number: str):
     """
     Get comprehensive project details including all related Spectrum data.
-    Returns job info, dates, phases, UDFs, cost projections, and contacts.
+    Returns job info, dates, phases, UDFs, and contacts.
     """
     try:
         from urllib.parse import unquote
@@ -2176,11 +2054,6 @@ def get_project_comprehensive_details(request, job_number: str):
             company_code=spectrum_job.company_code,
             job_number=job_number
         ).first()
-        
-        cost_projections = SpectrumJobCostProjection.objects.filter(
-            company_code=spectrum_job.company_code,
-            job_number=job_number
-        ).order_by('-transaction_date')
         
         contacts = SpectrumJobContact.objects.filter(
             company_code=spectrum_job.company_code,
@@ -2289,16 +2162,6 @@ def get_project_comprehensive_details(request, job_number: str):
                 'udf19': udf.udf19 if udf else None,
                 'udf20': udf.udf20 if udf else None,
             } if udf else None,
-            'cost_projections': [{
-                'phase_code': cp.phase_code,
-                'cost_type': cp.cost_type,
-                'transaction_date': cp.transaction_date.isoformat() if cp.transaction_date else None,
-                'amount': float(cp.amount) if cp.amount else None,
-                'projected_hours': float(cp.projected_hours) if cp.projected_hours else None,
-                'projected_quantity': float(cp.projected_quantity) if cp.projected_quantity else None,
-                'note': cp.note,
-                'operator': cp.operator,
-            } for cp in cost_projections],
             'contacts': [{
                 'contact_id': c.contact_id,
                 'first_name': c.first_name,

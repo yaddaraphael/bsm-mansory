@@ -93,7 +93,22 @@ def parse_date_robust(date_value: Any) -> Optional[date]:
         return None
 
     # Try a small set of common formats first (fast path)
-    fmts = ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
+    fmts = (
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%Y-%m-%d",
+        "%m-%d-%Y",
+        "%m-%d-%y",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%y %H:%M:%S",
+        "%m-%d-%Y %H:%M:%S",
+        "%m-%d-%y %H:%M:%S",
+    )
     for fmt in fmts:
         try:
             return datetime.strptime(s, fmt).date()
@@ -113,7 +128,17 @@ def parse_decimal(value: Any) -> Optional[Decimal]:
     if isinstance(value, Decimal):
         return value
     try:
-        return Decimal(str(value).strip())
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "null"}:
+            return None
+        # Normalize common numeric formatting (e.g., "81,928.00", "(1,234.56)")
+        negative = False
+        if text.startswith("(") and text.endswith(")"):
+            negative = True
+            text = text[1:-1].strip()
+        text = text.replace(",", "")
+        dec = Decimal(text)
+        return -dec if negative else dec
     except (InvalidOperation, ValueError):
         return None
 
@@ -125,3 +150,22 @@ def parse_decimal_or_zero(value: Any) -> Decimal:
     """
     parsed = parse_decimal(value)
     return parsed if parsed is not None else Decimal("0")
+
+
+ZERO_STRINGS = {"", ".00", "0.00", "0"}
+
+
+def parse_quantity(value: Any, unit_of_measure: Optional[str]) -> Optional[Decimal]:
+    """
+    Parse quantity fields with UOM-aware rules.
+    - Treat blank/zero-ish values as missing.
+    - If UOM is blank or HRS/HR, quantities are not meaningful -> return None.
+    - Otherwise, return the parsed decimal.
+    """
+    raw = "" if value is None else str(value).strip()
+    if raw in ZERO_STRINGS:
+        uom = (unit_of_measure or "").strip().upper()
+        if not uom or uom in {"HRS", "HR"}:
+            return None
+        return None
+    return parse_decimal(raw)

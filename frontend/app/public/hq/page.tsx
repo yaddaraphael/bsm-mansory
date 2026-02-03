@@ -90,7 +90,6 @@ interface ProjectDetails {
     dates?: SpectrumDates;
     phases?: Array<Record<string, unknown>>;
     udf?: Record<string, unknown>;
-    cost_projections?: Array<Record<string, unknown>>;
     contacts?: Array<Record<string, unknown>>;
   };
 }

@@ -95,6 +95,14 @@ const getStatusClasses = (status: string) => {
  return { statusColor, indicatorColor };
 };
 
+const parseJobNumber = (jobNumber?: string) => {
+ if (!jobNumber) return { prefix: Number.MAX_SAFE_INTEGER, suffix: Number.MAX_SAFE_INTEGER };
+ const trimmed = jobNumber.trim();
+ const match = trimmed.match(/^(\d+)\s*-\s*(\d+)$/);
+ if (!match) return { prefix: Number.MAX_SAFE_INTEGER, suffix: Number.MAX_SAFE_INTEGER, raw: trimmed };
+ return { prefix: Number(match[1]), suffix: Number(match[2]) };
+};
+
 export default function ProjectsPage() {
  const router = useRouter();
  const { user } = useAuth();
@@ -148,6 +156,16 @@ export default function ProjectsPage() {
  });
 
  const totalPages = useMemo(() => Math.max(1, Math.ceil((count || 0) / pageSize)), [count, pageSize]);
+ const sortedProjects = useMemo(() => {
+  if (!projects || projects.length === 0) return [];
+  return [...projects].sort((a, b) => {
+   const ap = parseJobNumber(a.job_number);
+   const bp = parseJobNumber(b.job_number);
+   if (ap.prefix !== bp.prefix) return ap.prefix - bp.prefix;
+   if (ap.suffix !== bp.suffix) return ap.suffix - bp.suffix;
+   return String(a.job_number || '').localeCompare(String(b.job_number || ''));
+  });
+ }, [projects]);
 
  // Fetch branches & project managers for filters (only after auth)
  const userId = user?.id;
@@ -438,7 +456,7 @@ export default function ProjectsPage() {
        ) : (
         <>
          <div className="space-y-4">
-          {projects.map((project: Project) => {
+          {sortedProjects.map((project: Project) => {
            const projectStatus = getProjectStatus(project);
            const { statusColor, indicatorColor } = getStatusClasses(projectStatus);
 

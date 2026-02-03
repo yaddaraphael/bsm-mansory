@@ -86,6 +86,7 @@ class SpectrumSOAPClient:
     def _get_guid(self) -> str:
         return str(uuid.uuid4())
 
+
     def _normalize_base(self) -> str:
         if not self.endpoint:
             raise ValueError("SPECTRUM_ENDPOINT not configured")
@@ -607,6 +608,7 @@ class SpectrumSOAPClient:
         except Exception as e:
             logger.error("Error calling GetJobUDF: %s", e, exc_info=True)
             raise
+
 
     # -----------------------
     # "Fetch all" utilities (division + A/I/C)

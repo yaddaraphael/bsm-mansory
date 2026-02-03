@@ -13,7 +13,6 @@ urlpatterns = [
     path('jobs/dates/fetch/', views.get_job_dates_from_spectrum, name='fetch_job_dates'),
     path('jobs/phases/fetch/', views.get_phase_from_spectrum, name='fetch_phases'),
     path('jobs/phases/enhanced/fetch/', views.get_phase_enhanced_from_spectrum, name='fetch_phases_enhanced'),
-    path('jobs/cost-projections/post/', views.post_job_cost_projection, name='post_job_cost_projection'),
     path('jobs/dates/import/', views.import_job_dates_to_database, name='import_job_dates'),
     path('jobs/phases/import/', views.import_phases_to_database, name='import_phases'),
     path('projects/<str:job_number>/comprehensive/', views.get_project_comprehensive_details, name='get_project_comprehensive'),
